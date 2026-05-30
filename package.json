@@ -1,0 +1,43 @@
+{
+  "name": "qcode",
+  "displayName": "QCode",
+  "description": "A bare minimal VS Code extension with a hello world webview.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:qcode.hello"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "qcode",
+          "title": "QCode",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "qcode": [
+        {
+          "type": "webview",
+          "id": "qcode.hello",
+          "name": "Hello"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "package-install": "vsce package --allow-missing-repository --out qcode-0.0.1.vsix && code --install-extension qcode-0.0.1.vsix --force"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.6.0"
+  }
+}
