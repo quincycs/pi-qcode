@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -10,6 +11,7 @@ function activate(context) {
     vscode.window.registerWebviewViewProvider(viewType, {
       resolveWebviewView(view) {
         let currentRoute = { name: "home" };
+        const messageSessions = new Map();
 
         view.webview.options = { enableScripts: true };
 
@@ -34,6 +36,14 @@ function activate(context) {
 
           if (message.command === "home") {
             showHome();
+          }
+
+          if (message.command === "sendMessage") {
+            sendSessionMessage(
+              messageSessions,
+              String(message.filePath || ""),
+              String(message.text || ""),
+            );
           }
         });
 
@@ -247,6 +257,10 @@ function renderSessionDetail(filePath, nonce) {
   .submit-button:hover {
     background: var(--vscode-button-hoverBackground);
   }
+  .submit-button:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
   .title {
     min-width: 0;
     overflow: hidden;
@@ -293,19 +307,25 @@ function renderSessionDetail(filePath, nonce) {
   .footer {
     flex: 0 0 auto;
     display: flex;
+    align-items: flex-end;
     gap: 6px;
     padding: 8px;
     border-top: 1px solid var(--vscode-widget-border, transparent);
   }
   .message-input {
     min-width: 0;
+    min-height: 26px;
+    max-height: calc(1.35em * 10 + 10px);
     flex: 1 1 auto;
     padding: 4px 6px;
+    overflow-y: auto;
+    resize: none;
     color: var(--vscode-input-foreground);
     background: var(--vscode-input-background);
     border: 1px solid var(--vscode-input-border, transparent);
     border-radius: 3px;
     font: inherit;
+    line-height: 1.35;
   }
   .message-input:focus {
     outline: 1px solid var(--vscode-focusBorder, #007acc);
@@ -322,18 +342,37 @@ function renderSessionDetail(filePath, nonce) {
     <section class="body">
       ${renderSessionDetailBody(session)}
     </section>
-    <form class="footer" id="message-form">
-      <input class="message-input" type="text" aria-label="Message" placeholder="Message" />
-      <button class="submit-button" type="submit" aria-label="Submit">➤</button>
+    <form class="footer" id="message-form" data-file-path="${escapeHtml(filePath)}">
+      <textarea class="message-input" id="message-input" rows="1" aria-label="Message" placeholder="Message"></textarea>
+      <button class="submit-button" id="submit-button" type="submit" aria-label="Submit">➤</button>
     </form>
   </main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    const form = document.getElementById('message-form');
+    const input = document.getElementById('message-input');
+    const submitButton = document.getElementById('submit-button');
+    const resizeInput = () => {
+      input.style.height = 'auto';
+      const maxHeight = Number.parseFloat(getComputedStyle(input).maxHeight);
+      input.style.height = Math.min(input.scrollHeight, maxHeight) + 'px';
+    };
+
     document.getElementById('home-button').addEventListener('click', () => {
       vscode.postMessage({ command: 'home' });
     });
-    document.getElementById('message-form').addEventListener('submit', (event) => {
+    input.addEventListener('input', resizeInput);
+    resizeInput();
+    form.addEventListener('submit', (event) => {
       event.preventDefault();
+      if (!input.value) return;
+
+      vscode.postMessage({
+        command: 'sendMessage',
+        filePath: form.dataset.filePath || '',
+        text: input.value,
+      });
+      submitButton.disabled = true;
     });
   </script>
 </body>
@@ -350,6 +389,61 @@ function renderSessionDetailBody(session) {
     <div class="line-count">${session.lineCount}</div>
     <div class="path">${escapeHtml(session.filePath)}</div>
   </div>`;
+}
+
+function sendSessionMessage(messageSessions, filePath, text) {
+  if (!text) return;
+
+  if (!isSessionFile(filePath)) {
+    vscode.window.showErrorMessage(
+      "Unable to send message: invalid session file.",
+    );
+    return;
+  }
+
+  const resolvedFilePath = path.resolve(filePath);
+  if (messageSessions.has(resolvedFilePath)) return;
+
+  const guid = crypto.randomUUID();
+  const terminal = createSessionTerminal();
+  messageSessions.set(resolvedFilePath, { guid, terminal });
+
+  terminal.show();
+  terminal.sendText(buildSessionMessageCommand(resolvedFilePath, guid, text));
+}
+
+function createSessionTerminal() {
+  const cwd = getWorkspaceCwd();
+  return vscode.window.createTerminal({
+    name: "QCode Session Message",
+    ...(cwd ? { cwd } : {}),
+  });
+}
+
+function getWorkspaceCwd() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  return workspaceFolder ? workspaceFolder.uri.fsPath : undefined;
+}
+
+function buildSessionMessageCommand(sessionFilePath, guid, message) {
+  const encodedMessage = message
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\n/g, "\\n");
+
+  return [
+    "pi",
+    "--session",
+    shellEscape(sessionFilePath),
+    shellEscape(`/msg-on ${guid}`),
+    shellEscape(encodedMessage),
+  ].join(" ");
+}
+
+function shellEscape(value) {
+  const text = String(value);
+  if (!text) return "''";
+  return `'${text.replace(/'/g, `'\\''`)}'`;
 }
 
 function readSessionDetail(filePath) {
