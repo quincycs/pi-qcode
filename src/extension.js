@@ -9,16 +9,49 @@ function activate(context) {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(viewType, {
       resolveWebviewView(view) {
-        view.webview.html = renderHome();
+        let currentRoute = { name: "home" };
+
+        view.webview.options = { enableScripts: true };
+
+        const showHome = () => {
+          currentRoute = { name: "home" };
+          view.webview.html = renderHome(getNonce());
+        };
+
+        const showSessionDetail = (filePath) => {
+          currentRoute = { name: "sessionDetail", filePath };
+          view.webview.html = renderSessionDetail(filePath, getNonce());
+        };
+
+        showHome();
+
+        view.webview.onDidReceiveMessage((message) => {
+          if (!message || typeof message.command !== "string") return;
+
+          if (message.command === "openSession") {
+            showSessionDetail(String(message.filePath || ""));
+          }
+
+          if (message.command === "home") {
+            showHome();
+          }
+        });
+
         view.onDidChangeVisibility(() => {
-          if (view.visible) view.webview.html = renderHome();
+          if (!view.visible) return;
+
+          if (currentRoute.name === "sessionDetail") {
+            showSessionDetail(currentRoute.filePath);
+          } else {
+            showHome();
+          }
         });
       },
     }),
   );
 }
 
-function renderHome() {
+function renderHome(nonce) {
   const sessions = getRecentSessions();
   const groups = groupSessions(sessions);
 
@@ -26,7 +59,7 @@ function renderHome() {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; form-action 'none';">
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   body {
@@ -67,12 +100,25 @@ function renderHome() {
     text-transform: uppercase;
   }
   .session {
+    display: block;
+    width: 100%;
     margin: 0;
     padding: 8px 12px;
+    color: inherit;
+    background: transparent;
+    border: 0;
     border-left: 2px solid transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
-  .session:hover {
+  .session:hover,
+  .session:focus-visible {
     background: var(--vscode-list-hoverBackground);
+  }
+  .session:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder, #007acc);
+    outline-offset: -1px;
   }
   .title-row {
     display: flex;
@@ -133,8 +179,207 @@ function renderHome() {
       ${renderGroups(groups, sessions.length)}
     </section>
   </main>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+    document.querySelectorAll('[data-open-session]').forEach((session) => {
+      session.addEventListener('click', () => {
+        vscode.postMessage({
+          command: 'openSession',
+          filePath: session.dataset.filePath || '',
+        });
+      });
+    });
+  </script>
 </body>
 </html>`;
+}
+
+function renderSessionDetail(filePath, nonce) {
+  const session = readSessionDetail(filePath);
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; form-action 'none';">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0;
+    overflow: hidden;
+    color: var(--vscode-foreground);
+    background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+  }
+  .detail {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--vscode-widget-border, transparent);
+  }
+  .home-button,
+  .submit-button {
+    color: var(--vscode-button-foreground);
+    background: var(--vscode-button-background);
+    border: 0;
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+  }
+  .home-button {
+    padding: 4px 8px;
+  }
+  .submit-button {
+    width: 28px;
+    height: 26px;
+    flex: 0 0 auto;
+  }
+  .home-button:hover,
+  .submit-button:hover {
+    background: var(--vscode-button-hoverBackground);
+  }
+  .title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 16px 12px;
+  }
+  .card {
+    padding: 12px;
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-widget-border, transparent);
+    border-radius: 5px;
+  }
+  .label {
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+  }
+  .line-count {
+    margin-top: 6px;
+    font-size: 26px;
+    font-weight: 700;
+  }
+  .path {
+    margin-top: 8px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+    line-height: 1.4;
+    word-break: break-all;
+  }
+  .error {
+    color: var(--vscode-errorForeground);
+    line-height: 1.45;
+  }
+  .footer {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 6px;
+    padding: 8px;
+    border-top: 1px solid var(--vscode-widget-border, transparent);
+  }
+  .message-input {
+    min-width: 0;
+    flex: 1 1 auto;
+    padding: 4px 6px;
+    color: var(--vscode-input-foreground);
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 3px;
+    font: inherit;
+  }
+  .message-input:focus {
+    outline: 1px solid var(--vscode-focusBorder, #007acc);
+    outline-offset: -1px;
+  }
+</style>
+</head>
+<body>
+  <main class="detail">
+    <header class="header">
+      <button type="button" class="home-button" id="home-button">Home</button>
+      <div class="title">${escapeHtml(session.title)}</div>
+    </header>
+    <section class="body">
+      ${renderSessionDetailBody(session)}
+    </section>
+    <form class="footer" id="message-form">
+      <input class="message-input" type="text" aria-label="Message" placeholder="Message" />
+      <button class="submit-button" type="submit" aria-label="Submit">➤</button>
+    </form>
+  </main>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+    document.getElementById('home-button').addEventListener('click', () => {
+      vscode.postMessage({ command: 'home' });
+    });
+    document.getElementById('message-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function renderSessionDetailBody(session) {
+  if (session.error) {
+    return `<div class="error">${escapeHtml(session.error)}</div>`;
+  }
+
+  return `<div class="card">
+    <div class="label">Lines in session file</div>
+    <div class="line-count">${session.lineCount}</div>
+    <div class="path">${escapeHtml(session.filePath)}</div>
+  </div>`;
+}
+
+function readSessionDetail(filePath) {
+  if (!filePath) {
+    return {
+      title: "Session Detail",
+      error: "No session file was provided.",
+    };
+  }
+
+  if (!isSessionFile(filePath)) {
+    return {
+      title: "Session Detail",
+      error: "The requested session file is not valid.",
+    };
+  }
+
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    return {
+      title: path.basename(filePath),
+      filePath,
+      lineCount: countLines(content),
+    };
+  } catch {
+    return {
+      title: path.basename(filePath),
+      error: "Unable to read the requested session file.",
+    };
+  }
 }
 
 function getRecentSessions() {
@@ -146,10 +391,13 @@ function getRecentSessions() {
 }
 
 function getSessionFiles() {
-  const sessionsDir = path.join(os.homedir(), ".pi", "agent", "sessions");
   const files = [];
-  walk(sessionsDir, files);
+  walk(getSessionsDir(), files);
   return files;
+}
+
+function getSessionsDir() {
+  return path.join(os.homedir(), ".pi", "agent", "sessions");
 }
 
 function walk(dir, files) {
@@ -238,6 +486,7 @@ function parseSessionFile(filePath) {
       model,
       messageCount,
       totalTokens,
+      filePath,
       fileName: path.basename(filePath),
       title: firstUserMessage || path.basename(filePath),
       preview: firstUserMessage || "(no messages yet)",
@@ -295,14 +544,14 @@ function renderSession(session) {
     .join(" · ");
 
   return `
-    <article class="session" title="${escapeHtml(session.fileName)}">
+    <button type="button" class="session" title="${escapeHtml(session.fileName)}" data-open-session data-file-path="${escapeHtml(session.filePath)}">
       <div class="title-row">
         <span class="dot"></span>
         <div class="title">${escapeHtml(session.title)}</div>
       </div>
       <div class="meta">${escapeHtml(meta)}</div>
       <div class="preview">${escapeHtml(session.preview)}</div>
-    </article>`;
+    </button>`;
 }
 
 function dateGroup(date) {
@@ -332,6 +581,27 @@ function timeSince(date) {
 function shortPath(value) {
   const home = os.homedir();
   return value.startsWith(home) ? `~${value.slice(home.length)}` : value;
+}
+
+function countLines(content) {
+  if (!content) return 0;
+
+  const lineBreaks = content.match(/\r\n|\r|\n/g) || [];
+  const endsWithLineBreak = /\r\n$|\r$|\n$/.test(content);
+  return lineBreaks.length + (endsWithLineBreak ? 0 : 1);
+}
+
+function isSessionFile(filePath) {
+  const resolvedFilePath = path.resolve(filePath);
+  const resolvedSessionsDir = path.resolve(getSessionsDir());
+  return (
+    resolvedFilePath.startsWith(`${resolvedSessionsDir}${path.sep}`) &&
+    resolvedFilePath.endsWith(".jsonl")
+  );
+}
+
+function getNonce() {
+  return `${Date.now()}${Math.random().toString(36).slice(2)}`;
 }
 
 function escapeHtml(value) {
