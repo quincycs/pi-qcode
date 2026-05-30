@@ -1,9 +1,10 @@
 {
   "name": "qcode",
   "displayName": "QCode",
-  "description": "A bare minimal VS Code extension with a hello world webview.",
+  "description": "A bare minimal VS Code extension home screen for recent Pi sessions.",
   "version": "0.0.1",
   "publisher": "local",
+  "license": "UNLICENSED",
   "engines": {
     "vscode": "^1.92.0"
   },
@@ -11,7 +12,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:qcode.hello"
+    "onView:qcode.home"
   ],
   "main": "./src/extension.js",
   "contributes": {
@@ -28,8 +29,8 @@
       "qcode": [
         {
           "type": "webview",
-          "id": "qcode.hello",
-          "name": "Hello"
+          "id": "qcode.home",
+          "name": "Home"
         }
       ]
     }

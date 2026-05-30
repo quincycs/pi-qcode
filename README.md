@@ -1,6 +1,6 @@
 # QCode
 
-Bare minimal VS Code extension showing `hello world`.
+Bare minimal VS Code extension home screen listing recent Pi sessions.
 
 ## Install
 
