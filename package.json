@@ -14,7 +14,7 @@
   "activationEvents": [
     "onView:qcode.home"
   ],
-  "main": "./src/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -36,9 +36,15 @@
     }
   },
   "scripts": {
-    "package-install": "vsce package --allow-missing-repository --out qcode-0.0.1.vsix && code --install-extension qcode-0.0.1.vsix --force"
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc --project tsconfig.json",
+    "watch": "tsc --watch --project tsconfig.json",
+    "package-install": "npm run compile && vsce package --allow-missing-repository --out qcode-0.0.1.vsix && code --install-extension qcode-0.0.1.vsix --force"
   },
   "devDependencies": {
-    "@vscode/vsce": "^3.6.0"
+    "@types/node": "^25.9.1",
+    "@types/vscode": "^1.92.0",
+    "@vscode/vsce": "^3.6.0",
+    "typescript": "^6.0.3"
   }
 }
