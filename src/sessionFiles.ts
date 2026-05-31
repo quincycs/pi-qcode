@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -24,10 +25,25 @@ export interface SessionMessage {
   counts?: Record<string, number>;
 }
 
+export interface ContextUsage {
+  usedTokens?: number;
+  contextWindow?: number;
+  percent?: number;
+  modelId?: string;
+  provider?: string;
+  thinkingLevel?: string;
+  sessionCost?: number;
+}
+
 interface SessionMessageState {
   lastRenderedWasUser: boolean;
   thinkingCounts: Record<string, number>;
   visibleMessages: SessionMessage[];
+  contextUsage?: ContextUsage;
+  modelId?: string;
+  provider?: string;
+  thinkingLevel?: string;
+  sessionCost: number;
 }
 
 export interface SessionDetail {
@@ -35,6 +51,7 @@ export interface SessionDetail {
   filePath?: string;
   fileSize?: number;
   messages: SessionMessage[];
+  contextUsage?: ContextUsage;
   messageState?: SessionMessageState;
   error?: string;
 }
@@ -78,6 +95,7 @@ export function readSessionDetail(filePath: string): SessionDetail {
       filePath,
       fileSize: Buffer.byteLength(content, "utf8"),
       messages: messageState.visibleMessages,
+      contextUsage: messageState.contextUsage,
       messageState,
     };
   } catch {
@@ -101,8 +119,8 @@ export function watchSessionDetail(
     session.filePath,
     session.fileSize ?? 0,
     session.messageState ?? createEmptySessionMessageState(),
-    (messages) => {
-      webview.postMessage({ command: "replaceMessages", messages });
+    (messages, contextUsage) => {
+      webview.postMessage({ command: "replaceMessages", messages, contextUsage });
     },
   );
 }
@@ -164,6 +182,15 @@ function hasFinalPhase(value: unknown): boolean {
   );
 }
 
+interface UsageRecord {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  totalTokens?: number;
+  costTotal?: number;
+}
+
 function readText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -171,6 +198,41 @@ function readText(content: unknown): string {
     .filter((item) => item && item.type === "text" && typeof item.text === "string")
     .map((item) => item.text as string)
     .join("\n");
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function readUsage(value: unknown): UsageRecord | undefined {
+  const usage = readRecord(value);
+  if (!usage) return undefined;
+
+  return {
+    input: readPositiveNumber(usage.input),
+    output: readPositiveNumber(usage.output),
+    cacheRead: readPositiveNumber(usage.cacheRead),
+    cacheWrite: readPositiveNumber(usage.cacheWrite),
+    totalTokens: readPositiveNumber(usage.totalTokens),
+    costTotal: readPositiveNumber(readRecord(usage.cost)?.total),
+  };
+}
+
+function readPositiveNumber(value: unknown): number | undefined {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : undefined;
+}
+
+function calculateUsageTokens(usage: UsageRecord): number {
+  return Math.round(
+    usage.totalTokens ??
+      (usage.input ?? 0) +
+        (usage.output ?? 0) +
+        (usage.cacheRead ?? 0) +
+        (usage.cacheWrite ?? 0),
+  );
 }
 
 function getSessionFolderName(cwd: string): string {
@@ -267,9 +329,9 @@ function parseSessionFile(filePath: string): RecentSession | null {
 
           if (entry.message.role === "assistant") {
             messageCount += 1;
-            if (entry.usage && Number(entry.usage.totalTokens)) {
-              totalTokens += Number(entry.usage.totalTokens);
-            }
+            const usage = readUsage(entry.message.usage) ?? readUsage(entry.usage);
+            const usageTokens = usage ? calculateUsageTokens(usage) : 0;
+            if (usageTokens) totalTokens += usageTokens;
           }
         }
       } catch {
@@ -310,6 +372,11 @@ function createEmptySessionMessageState(): SessionMessageState {
     lastRenderedWasUser: false,
     thinkingCounts: {},
     visibleMessages: [],
+    contextUsage: undefined,
+    modelId: undefined,
+    provider: undefined,
+    thinkingLevel: undefined,
+    sessionCost: 0,
   };
 }
 
@@ -317,6 +384,7 @@ function updateSessionMessageState(state: SessionMessageState, line: string): bo
   const entry = readSessionEntry(line);
   if (!entry) return false;
 
+  const contextChanged = updateSessionContextUsage(state, entry);
   const message = readRenderableSessionMessage(entry);
   if (message) {
     removeThinkingMessage(state.visibleMessages);
@@ -329,7 +397,7 @@ function updateSessionMessageState(state: SessionMessageState, line: string): bo
     return true;
   }
 
-  if (!state.lastRenderedWasUser) return false;
+  if (!state.lastRenderedWasUser) return contextChanged;
 
   incrementThinkingCount(state.thinkingCounts, getEntryType(entry));
   upsertThinkingMessage(state.visibleMessages, state.thinkingCounts);
@@ -345,6 +413,114 @@ function readSessionEntry(line: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function updateSessionContextUsage(
+  state: SessionMessageState,
+  entry: Record<string, unknown>,
+): boolean {
+  const before = serializeContextUsage(state.contextUsage);
+  const entryType = typeof entry.type === "string" ? entry.type : "";
+
+  if (entryType === "model_change") {
+    const modelId = typeof entry.modelId === "string" ? entry.modelId : state.modelId;
+    const provider = typeof entry.provider === "string" ? entry.provider : state.provider;
+    updateSessionModel(state, provider, modelId);
+  }
+
+  if (entryType === "thinking_level_change") {
+    const thinkingLevel = typeof entry.thinkingLevel === "string" ? entry.thinkingLevel : undefined;
+    updateThinkingLevel(state, thinkingLevel);
+  }
+
+  if (entryType === "compaction") {
+    state.contextUsage = buildContextUsage(state);
+  }
+
+  if (entryType === "message") {
+    const message = readRecord(entry.message);
+    if (message?.role === "assistant") {
+      const provider = typeof message.provider === "string" ? message.provider : state.provider;
+      const modelId = typeof message.model === "string" ? message.model : state.modelId;
+      updateSessionModel(state, provider, modelId);
+
+      const usage = readUsage(message.usage) ?? readUsage(entry.usage);
+      const usedTokens = usage ? calculateUsageTokens(usage) : 0;
+      if (usage?.costTotal) state.sessionCost += usage.costTotal;
+      if (usedTokens > 0 || usage?.costTotal) {
+        state.contextUsage = buildContextUsage(
+          state,
+          usedTokens > 0 ? usedTokens : state.contextUsage?.usedTokens,
+        );
+      }
+    }
+  }
+
+  return serializeContextUsage(state.contextUsage) !== before;
+}
+
+function updateSessionModel(
+  state: SessionMessageState,
+  provider: string | undefined,
+  modelId: string | undefined,
+): void {
+  if (provider) state.provider = provider;
+  if (modelId) state.modelId = modelId;
+
+  if (state.contextUsage) {
+    state.contextUsage = buildContextUsage(state, state.contextUsage.usedTokens);
+  } else if (state.modelId) {
+    state.contextUsage = buildContextUsage(state);
+  }
+}
+
+function updateThinkingLevel(
+  state: SessionMessageState,
+  thinkingLevel: string | undefined,
+): void {
+  if (thinkingLevel) state.thinkingLevel = thinkingLevel;
+
+  if (state.contextUsage) {
+    state.contextUsage = buildContextUsage(state, state.contextUsage.usedTokens);
+  } else if (state.thinkingLevel) {
+    state.contextUsage = buildContextUsage(state);
+  }
+}
+
+function buildContextUsage(
+  state: SessionMessageState,
+  usedTokens?: number,
+): ContextUsage | undefined {
+  const contextWindow = state.modelId
+    ? resolveModelContextWindow(state.provider, state.modelId)
+    : undefined;
+  const percent = usedTokens !== undefined && contextWindow
+    ? (usedTokens / contextWindow) * 100
+    : undefined;
+
+  if (
+    !state.modelId &&
+    !state.thinkingLevel &&
+    usedTokens === undefined &&
+    contextWindow === undefined &&
+    state.sessionCost <= 0
+  ) {
+    return undefined;
+  }
+
+  return {
+    usedTokens,
+    contextWindow,
+    percent,
+    modelId: state.modelId,
+    provider: state.provider,
+    thinkingLevel: state.thinkingLevel,
+    sessionCost: state.sessionCost > 0 ? state.sessionCost : undefined,
+  };
+}
+
+function serializeContextUsage(usage: ContextUsage | undefined): string {
+  return JSON.stringify(usage ?? null);
 }
 
 function readRenderableSessionMessage(entry: Record<string, unknown>): SessionMessage | null {
@@ -414,11 +590,126 @@ function createThinkingMessage(counts: Record<string, number>): SessionMessage |
   };
 }
 
+const modelContextWindowCache = new Map<string, number | undefined>();
+
+const knownContextWindows: Record<string, number> = {
+  "gpt-5.5": 272_000,
+  "gpt-5.3-codex-spark": 128_000,
+  "gpt-5.2": 400_000,
+  "gpt-5.1": 400_000,
+  "gpt-5": 400_000,
+  "gpt-4.1": 1_000_000,
+  "gpt-4.1-mini": 1_000_000,
+  "gpt-4.1-nano": 1_000_000,
+  "gpt-4o": 128_000,
+  "gpt-4o-mini": 128_000,
+  "claude-opus-4-5": 200_000,
+  "claude-sonnet-4-5": 200_000,
+  "claude-sonnet-4": 200_000,
+  "claude-opus-4": 200_000,
+  "claude-3-7-sonnet": 200_000,
+  "gemini-3-pro-preview": 1_000_000,
+  "gemini-2.5-pro": 1_000_000,
+  "gemini-2.5-flash": 1_000_000,
+};
+
+function resolveModelContextWindow(
+  provider: string | undefined,
+  modelId: string,
+): number | undefined {
+  const cacheKey = `${provider || ""}/${modelId}`;
+  if (modelContextWindowCache.has(cacheKey)) {
+    return modelContextWindowCache.get(cacheKey);
+  }
+
+  const contextWindow =
+    readCustomModelContextWindow(provider, modelId) ??
+    readPiModelContextWindow(provider, modelId) ??
+    knownContextWindows[modelId];
+  modelContextWindowCache.set(cacheKey, contextWindow);
+  return contextWindow;
+}
+
+function readCustomModelContextWindow(
+  provider: string | undefined,
+  modelId: string,
+): number | undefined {
+  const modelsPath = path.join(os.homedir(), ".pi", "agent", "models.json");
+  if (!fs.existsSync(modelsPath)) return undefined;
+
+  try {
+    const parsed = JSON.parse(stripJsonComments(fs.readFileSync(modelsPath, "utf8")));
+    const providers = readRecord(parsed.providers);
+    const providerEntries = provider
+      ? [[provider, providers?.[provider]]]
+      : Object.entries(providers ?? {});
+
+    for (const [, providerValue] of providerEntries) {
+      const providerConfig = readRecord(providerValue);
+      const models = providerConfig?.models;
+      if (!Array.isArray(models)) continue;
+
+      for (const model of models) {
+        const modelConfig = readRecord(model);
+        const id = modelConfig?.id;
+        if (id === modelId) return readPositiveNumber(modelConfig?.contextWindow);
+      }
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function readPiModelContextWindow(
+  provider: string | undefined,
+  modelId: string,
+): number | undefined {
+  try {
+    const output = execFileSync("pi", ["--list-models", modelId], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1500,
+    });
+
+    for (const line of output.split(/\r?\n/)) {
+      const columns = line.trim().split(/\s+/);
+      if (columns.length < 3 || columns[0] === "provider") continue;
+      if (provider && columns[0] !== provider) continue;
+      if (columns[1] === modelId) return parseTokenCount(columns[2]);
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function parseTokenCount(value: string): number | undefined {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)([KMB])?$/i);
+  if (!match) return undefined;
+
+  const base = Number(match[1]);
+  if (!Number.isFinite(base)) return undefined;
+
+  const suffix = (match[2] || "").toUpperCase();
+  const multiplier = suffix === "B" ? 1_000_000_000 : suffix === "M" ? 1_000_000 : suffix === "K" ? 1_000 : 1;
+  return Math.round(base * multiplier);
+}
+
+function stripJsonComments(value: string): string {
+  return value
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1")
+    .replace(/,\s*([}\]])/g, "$1");
+}
+
 function createSessionFileWatcher(
   filePath: string,
   startPosition: number,
   messageState: SessionMessageState,
-  onMessages: (messages: SessionMessage[]) => void,
+  onMessages: (messages: SessionMessage[], contextUsage?: ContextUsage) => void,
 ): vscode.Disposable | undefined {
   let disposed = false;
   let offset = startPosition;
@@ -457,7 +748,7 @@ function createSessionFileWatcher(
         (didChange, line) => updateSessionMessageState(messageState, line) || didChange,
         false,
       );
-      if (changed) onMessages(messageState.visibleMessages);
+      if (changed) onMessages(messageState.visibleMessages, messageState.contextUsage);
     } catch {
       // Ignore transient reads while the session file is being appended.
     } finally {

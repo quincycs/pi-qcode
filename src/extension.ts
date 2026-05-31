@@ -130,6 +130,7 @@ export function activate(context: vscode.ExtensionContext): void {
             filePath,
             title: session.title,
             messages: session.messages,
+            contextUsage: session.contextUsage,
           });
         };
 

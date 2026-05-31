@@ -61,13 +61,20 @@ export function renderSessionDetail(
     cursor: default;
     opacity: 0.55;
   }
-  .title {
+  .context-usage {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
     white-space: nowrap;
-    font-size: 13px;
-    font-weight: 600;
+  }
+  .context-usage-value {
+    flex: 0 0 auto;
   }
   .body {
     flex: 1 1 auto;
@@ -216,7 +223,7 @@ export function renderSessionDetail(
   <main class="detail">
     <header class="header">
       <button type="button" class="home-button" id="home-button">Home</button>
-      <div class="title" id="session-title">${escapeHtml(session.title)}</div>
+      <div class="context-usage" id="context-usage" aria-label="Context window usage" title="Context usage unavailable">—</div>
     </header>
     <section class="body">
       ${renderSessionDetailBody(session)}
@@ -233,8 +240,8 @@ export function renderSessionDetail(
     const vscode = acquireVsCodeApi();
     const form = document.getElementById('message-form');
     const input = document.getElementById('message-input');
-    const title = document.getElementById('session-title');
     const messages = document.getElementById('messages');
+    const contextUsage = document.getElementById('context-usage');
     const typeahead = document.getElementById('typeahead');
     const typeaheadList = document.getElementById('typeahead-list');
     let completionState = null;
@@ -300,6 +307,57 @@ export function renderSessionDetail(
         return;
       }
       newMessages.forEach(appendMessage);
+    };
+    const formatTokens = (value) => {
+      const numberValue = Number(value || 0);
+      if (!Number.isFinite(numberValue) || numberValue <= 0) return '0';
+      if (numberValue >= 1000000) return (numberValue / 1000000).toFixed(numberValue >= 10000000 ? 0 : 1) + 'M';
+      if (numberValue >= 1000) return (numberValue / 1000).toFixed(numberValue >= 10000 ? 0 : 1) + 'K';
+      return String(Math.round(numberValue));
+    };
+    const formatCost = (value) => {
+      const numberValue = Number(value || 0);
+      if (!Number.isFinite(numberValue) || numberValue <= 0) return '';
+      return '$' + numberValue.toFixed(numberValue < 0.01 ? 4 : numberValue < 1 ? 3 : 2);
+    };
+    const updateContextUsage = (usage) => {
+      if (!contextUsage) return;
+
+      const used = Number(usage && usage.usedTokens);
+      const total = Number(usage && usage.contextWindow);
+      const rawPercent = Number.isFinite(used) && used >= 0 && Number.isFinite(total) && total > 0
+        ? (used / total) * 100
+        : NaN;
+      const hasPercent = Number.isFinite(rawPercent);
+
+      const details = [];
+      if (usage && usage.modelId) details.push(usage.modelId);
+      if (usage && usage.thinkingLevel) details.push('reasoning ' + usage.thinkingLevel);
+      const cost = formatCost(usage && usage.sessionCost);
+      if (cost) details.push(cost);
+      const detailText = details.join(' · ');
+      const detailSuffix = detailText ? ' · ' + detailText : '';
+
+      if (hasPercent) {
+        const title = 'Context window used: ' + rawPercent.toFixed(1) + '% (' + formatTokens(used) + ' / ' + formatTokens(total) + ' tokens' + detailSuffix + ')';
+        const percentElement = document.createElement('span');
+        percentElement.className = 'context-usage-value';
+        percentElement.textContent = rawPercent.toFixed(1) + '%';
+        contextUsage.replaceChildren(percentElement);
+        if (cost) {
+          const costElement = document.createElement('span');
+          costElement.className = 'context-usage-value';
+          costElement.textContent = cost;
+          contextUsage.append(costElement);
+        }
+        contextUsage.title = title;
+        contextUsage.setAttribute('aria-valuetext', title);
+      } else {
+        const title = 'Context usage unavailable' + (detailText ? ' (' + detailText + ')' : '') + '. Waiting for assistant token usage and context window metadata.';
+        contextUsage.textContent = '—';
+        contextUsage.title = title;
+        contextUsage.setAttribute('aria-valuetext', title);
+      }
     };
     const hideTypeahead = () => {
       completionState = null;
@@ -435,6 +493,7 @@ export function renderSessionDetail(
       input.focus();
     };
     const initialInput = ${toScriptString(options.initialInput ?? "")};
+    updateContextUsage(${toScriptJson(session.contextUsage)});
     if (initialInput) addToInput(initialInput);
 
     document.getElementById('home-button').addEventListener('click', () => {
@@ -496,14 +555,15 @@ export function renderSessionDetail(
 
       if (data.command === 'sessionFileReady') {
         form.dataset.filePath = data.filePath || '';
-        if (title) title.textContent = data.title || 'Session Detail';
         replaceMessages(Array.isArray(data.messages) ? data.messages : []);
+        updateContextUsage(data.contextUsage);
         requestAnimationFrame(scrollLastMessageTop);
         return;
       }
 
       if (data.command === 'replaceMessages' && Array.isArray(data.messages)) {
         replaceMessages(data.messages);
+        updateContextUsage(data.contextUsage);
         requestAnimationFrame(scrollLastMessageTop);
         return;
       }
@@ -547,7 +607,11 @@ export function renderSessionDetail(
 }
 
 function toScriptString(value: string): string {
-  return JSON.stringify(value).replace(/</g, "\\u003c");
+  return toScriptJson(value);
+}
+
+function toScriptJson(value: unknown): string {
+  return JSON.stringify(value ?? null).replace(/</g, "\\u003c");
 }
 
 function renderSessionDetailBody(session: SessionDetail): string {
