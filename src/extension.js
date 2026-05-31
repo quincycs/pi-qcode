@@ -11,18 +11,29 @@ function activate(context) {
     vscode.window.registerWebviewViewProvider(viewType, {
       resolveWebviewView(view) {
         let currentRoute = { name: "home" };
+        let sessionWatcher;
         const messageSessions = new Map();
 
         view.webview.options = { enableScripts: true };
 
+        const stopSessionWatcher = () => {
+          if (!sessionWatcher) return;
+          sessionWatcher.dispose();
+          sessionWatcher = undefined;
+        };
+
         const showHome = () => {
+          stopSessionWatcher();
           currentRoute = { name: "home" };
           view.webview.html = renderHome(getNonce());
         };
 
         const showSessionDetail = (filePath) => {
+          stopSessionWatcher();
+          const session = readSessionDetail(filePath);
           currentRoute = { name: "sessionDetail", filePath };
-          view.webview.html = renderSessionDetail(filePath, getNonce());
+          view.webview.html = renderSessionDetail(filePath, getNonce(), session);
+          sessionWatcher = watchSessionDetail(session, view.webview);
         };
 
         showHome();
@@ -56,6 +67,8 @@ function activate(context) {
             showHome();
           }
         });
+
+        context.subscriptions.push({ dispose: stopSessionWatcher });
       },
     }),
   );
@@ -204,9 +217,7 @@ function renderHome(nonce) {
 </html>`;
 }
 
-function renderSessionDetail(filePath, nonce) {
-  const session = readSessionDetail(filePath);
-
+function renderSessionDetail(filePath, nonce, session) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -275,30 +286,36 @@ function renderSessionDetail(filePath, nonce) {
     overflow: auto;
     padding: 16px 12px;
   }
-  .card {
-    padding: 12px;
+  .messages {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .session-message {
+    padding: 10px;
     background: var(--vscode-input-background);
     border: 1px solid var(--vscode-widget-border, transparent);
     border-radius: 5px;
   }
-  .label {
+  .message-role {
+    margin-bottom: 6px;
     color: var(--vscode-descriptionForeground);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.07em;
     text-transform: uppercase;
   }
-  .line-count {
-    margin-top: 6px;
-    font-size: 26px;
-    font-weight: 700;
+  .message-text {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font: inherit;
+    line-height: 1.45;
   }
-  .path {
-    margin-top: 8px;
+  .empty-messages {
     color: var(--vscode-descriptionForeground);
-    font-size: 10px;
-    line-height: 1.4;
-    word-break: break-all;
+    line-height: 1.45;
+    text-align: center;
   }
   .error {
     color: var(--vscode-errorForeground);
@@ -352,10 +369,35 @@ function renderSessionDetail(filePath, nonce) {
     const form = document.getElementById('message-form');
     const input = document.getElementById('message-input');
     const submitButton = document.getElementById('submit-button');
+    const messages = document.getElementById('messages');
     const resizeInput = () => {
       input.style.height = 'auto';
       const maxHeight = Number.parseFloat(getComputedStyle(input).maxHeight);
       input.style.height = Math.min(input.scrollHeight, maxHeight) + 'px';
+    };
+    const scrollLastMessageTop = () => {
+      const lastMessage = messages && messages.querySelector('.session-message:last-child');
+      if (lastMessage) lastMessage.scrollIntoView({ block: 'start' });
+    };
+    const appendMessage = (message) => {
+      if (!messages) return;
+
+      const empty = messages.querySelector('.empty-messages');
+      if (empty) empty.remove();
+
+      const article = document.createElement('article');
+      article.className = 'session-message';
+
+      const role = document.createElement('div');
+      role.className = 'message-role';
+      role.textContent = message.role || 'message';
+
+      const text = document.createElement('pre');
+      text.className = 'message-text';
+      text.textContent = message.text || '';
+
+      article.append(role, text);
+      messages.append(article);
     };
 
     document.getElementById('home-button').addEventListener('click', () => {
@@ -363,6 +405,16 @@ function renderSessionDetail(filePath, nonce) {
     });
     input.addEventListener('input', resizeInput);
     resizeInput();
+    requestAnimationFrame(scrollLastMessageTop);
+    window.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || data.command !== 'appendMessages' || !Array.isArray(data.messages)) {
+        return;
+      }
+
+      data.messages.forEach(appendMessage);
+      requestAnimationFrame(scrollLastMessageTop);
+    });
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       if (!input.value) return;
@@ -384,11 +436,107 @@ function renderSessionDetailBody(session) {
     return `<div class="error">${escapeHtml(session.error)}</div>`;
   }
 
-  return `<div class="card">
-    <div class="label">Lines in session file</div>
-    <div class="line-count">${session.lineCount}</div>
-    <div class="path">${escapeHtml(session.filePath)}</div>
-  </div>`;
+  const messages = session.messages.length
+    ? session.messages.map(renderSessionMessage).join("")
+    : '<div class="empty-messages">No messages found in this session.</div>';
+
+  return `<div class="messages" id="messages">${messages}</div>`;
+}
+
+function renderSessionMessage(message) {
+  return `<article class="session-message">
+    <div class="message-role">${escapeHtml(message.role)}</div>
+    <pre class="message-text">${escapeHtml(message.text)}</pre>
+  </article>`;
+}
+
+function watchSessionDetail(session, webview) {
+  if (session.error || !session.filePath || !fs.existsSync(session.filePath)) {
+    return undefined;
+  }
+
+  return createSessionFileWatcher(session.filePath, session.fileSize, (messages) => {
+    if (!messages.length) return;
+    webview.postMessage({ command: "appendMessages", messages });
+  });
+}
+
+function createSessionFileWatcher(filePath, startPosition, onMessages) {
+  let disposed = false;
+  let offset = startPosition;
+  let pendingText = "";
+
+  const readAppendedLines = () => {
+    if (disposed) return;
+
+    let stat;
+    try {
+      stat = fs.statSync(filePath);
+    } catch {
+      return;
+    }
+
+    if (stat.size < offset) {
+      offset = stat.size;
+      pendingText = "";
+    }
+
+    if (stat.size === offset) return;
+
+    let fd;
+    try {
+      const length = stat.size - offset;
+      const buffer = Buffer.alloc(length);
+      fd = fs.openSync(filePath, "r");
+      fs.readSync(fd, buffer, 0, length, offset);
+      offset = stat.size;
+
+      const text = pendingText + buffer.toString("utf8");
+      const lines = text.split(/\r\n|\r|\n/);
+      pendingText = /\r\n$|\r$|\n$/.test(text) ? "" : lines.pop() || "";
+
+      const messages = lines.map(readSessionMessageLine).filter(Boolean);
+      onMessages(messages);
+    } catch {
+      // Ignore transient reads while the session file is being appended.
+    } finally {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // Ignore close errors.
+        }
+      }
+    }
+  };
+
+  let readTimer;
+  const scheduleRead = () => {
+    if (readTimer) return;
+    readTimer = setTimeout(() => {
+      readTimer = undefined;
+      readAppendedLines();
+    }, 50);
+  };
+
+  let watcher;
+  try {
+    watcher = fs.watch(filePath, { persistent: false }, (eventType) => {
+      if (eventType === "change") scheduleRead();
+    });
+  } catch {
+    return undefined;
+  }
+
+  scheduleRead();
+
+  return {
+    dispose() {
+      disposed = true;
+      if (readTimer) clearTimeout(readTimer);
+      watcher.close();
+    },
+  };
 }
 
 function sendSessionMessage(messageSessions, filePath, text) {
@@ -466,7 +614,8 @@ function readSessionDetail(filePath) {
     return {
       title: path.basename(filePath),
       filePath,
-      lineCount: countLines(content),
+      fileSize: Buffer.byteLength(content, "utf8"),
+      messages: readSessionMessages(content),
     };
   } catch {
     return {
@@ -592,11 +741,39 @@ function parseSessionFile(filePath) {
   }
 }
 
+function readSessionMessages(content) {
+  return content
+    .split(/\r\n|\r|\n/)
+    .map(readSessionMessageLine)
+    .filter(Boolean);
+}
+
+function readSessionMessageLine(line) {
+  if (!line.trim()) return null;
+
+  try {
+    const entry = JSON.parse(line);
+    if (entry.type !== "message" || !entry.message) return null;
+
+    const text = readText(entry.message.content);
+    if (!text) return null;
+
+    return {
+      role: String(entry.message.role || "message"),
+      text,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function readText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  const block = content.find((item) => item && item.type === "text");
-  return block && typeof block.text === "string" ? block.text : "";
+  return content
+    .filter((item) => item && item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("\n");
 }
 
 function groupSessions(sessions) {
