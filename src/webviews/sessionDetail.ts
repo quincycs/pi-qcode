@@ -93,6 +93,19 @@ export function renderSessionDetail(
   .session-message.role-assistant {
     border-right-color: var(--vscode-widget-border, transparent);
   }
+  .session-message.role-thinking {
+    color: var(--vscode-descriptionForeground);
+    background: transparent;
+    border-style: dashed;
+    border-right-color: var(--vscode-descriptionForeground);
+  }
+  .thinking-label {
+    margin-bottom: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+  }
   .message-text {
     margin: 0;
     white-space: pre-wrap;
@@ -180,8 +193,25 @@ export function renderSessionDetail(
       const empty = messages.querySelector('.empty-messages');
       if (empty) empty.remove();
 
+      const lastMessage = messages.querySelector('.session-message:last-child');
+      if (lastMessage && lastMessage.classList.contains('role-thinking')) {
+        lastMessage.remove();
+      }
+
       const article = document.createElement('article');
-      article.className = 'session-message ' + (message.role === 'user' ? 'role-user' : 'role-assistant');
+      const roleClass = message.kind === 'thinking'
+        ? 'role-thinking'
+        : message.role === 'user'
+          ? 'role-user'
+          : 'role-assistant';
+      article.className = 'session-message ' + roleClass;
+
+      if (message.kind === 'thinking') {
+        const label = document.createElement('div');
+        label.className = 'thinking-label';
+        label.textContent = 'Thinking...';
+        article.append(label);
+      }
 
       const text = document.createElement('pre');
       text.className = 'message-text';
@@ -221,6 +251,12 @@ export function renderSessionDetail(
         return;
       }
 
+      if (data.command === 'replaceMessages' && Array.isArray(data.messages)) {
+        replaceMessages(data.messages);
+        requestAnimationFrame(scrollLastMessageTop);
+        return;
+      }
+
       if (data.command !== 'appendMessages' || !Array.isArray(data.messages)) {
         return;
       }
@@ -232,11 +268,14 @@ export function renderSessionDetail(
       event.preventDefault();
       if (!input.value) return;
 
+      const sentText = input.value;
       vscode.postMessage({
         command: 'sendMessage',
         filePath: form.dataset.filePath || '',
-        text: input.value,
+        text: sentText,
       });
+      appendMessage({ role: 'user', kind: 'message', text: sentText });
+      requestAnimationFrame(scrollLastMessageTop);
       input.value = '';
       resizeInput();
       input.focus();
@@ -263,8 +302,14 @@ function renderSessionDetailBody(session: SessionDetail): string {
 }
 
 function renderSessionMessage(message: SessionMessage): string {
-  const roleClass = message.role === "user" ? "role-user" : "role-assistant";
+  const roleClass = message.kind === "thinking"
+    ? "role-thinking"
+    : message.role === "user"
+      ? "role-user"
+      : "role-assistant";
+  const label = message.kind === "thinking" ? '<div class="thinking-label">Thinking...</div>' : "";
   return `<article class="session-message ${roleClass}">
+    ${label}
     <pre class="message-text">${escapeHtml(message.text)}</pre>
   </article>`;
 }

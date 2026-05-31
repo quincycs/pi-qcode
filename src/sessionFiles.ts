@@ -20,6 +20,14 @@ export interface RecentSession {
 export interface SessionMessage {
   role: string;
   text: string;
+  kind?: "message" | "thinking";
+  counts?: Record<string, number>;
+}
+
+interface SessionMessageState {
+  lastRenderedWasUser: boolean;
+  thinkingCounts: Record<string, number>;
+  visibleMessages: SessionMessage[];
 }
 
 export interface SessionDetail {
@@ -27,6 +35,7 @@ export interface SessionDetail {
   filePath?: string;
   fileSize?: number;
   messages: SessionMessage[];
+  messageState?: SessionMessageState;
   error?: string;
 }
 
@@ -63,11 +72,13 @@ export function readSessionDetail(filePath: string): SessionDetail {
 
   try {
     const content = fs.readFileSync(filePath, "utf8");
+    const messageState = readSessionMessageState(content);
     return {
       title: path.basename(filePath),
       filePath,
       fileSize: Buffer.byteLength(content, "utf8"),
-      messages: readSessionMessages(content),
+      messages: messageState.visibleMessages,
+      messageState,
     };
   } catch {
     return {
@@ -86,10 +97,14 @@ export function watchSessionDetail(
     return undefined;
   }
 
-  return createSessionFileWatcher(session.filePath, session.fileSize ?? 0, (messages) => {
-    if (!messages.length) return;
-    webview.postMessage({ command: "appendMessages", messages });
-  });
+  return createSessionFileWatcher(
+    session.filePath,
+    session.fileSize ?? 0,
+    session.messageState ?? createEmptySessionMessageState(),
+    (messages) => {
+      webview.postMessage({ command: "replaceMessages", messages });
+    },
+  );
 }
 
 export function isSessionFile(filePath: string): boolean {
@@ -277,38 +292,129 @@ function parseSessionFile(filePath: string): RecentSession | null {
   }
 }
 
-function readSessionMessages(content: string): SessionMessage[] {
-  return content
-    .split(/\r\n|\r|\n/)
-    .map(readSessionMessageLine)
-    .filter((message): message is SessionMessage => Boolean(message));
+function readSessionMessageState(content: string): SessionMessageState {
+  const state = createEmptySessionMessageState();
+
+  for (const line of content.split(/\r\n|\r|\n/)) {
+    updateSessionMessageState(state, line);
+  }
+
+  return state;
 }
 
-function readSessionMessageLine(line: string): SessionMessage | null {
+function createEmptySessionMessageState(): SessionMessageState {
+  return {
+    lastRenderedWasUser: false,
+    thinkingCounts: {},
+    visibleMessages: [],
+  };
+}
+
+function updateSessionMessageState(state: SessionMessageState, line: string): boolean {
+  const entry = readSessionEntry(line);
+  if (!entry) return false;
+
+  const message = readRenderableSessionMessage(entry);
+  if (message) {
+    removeThinkingMessage(state.visibleMessages);
+    state.visibleMessages.push(message);
+    state.lastRenderedWasUser = message.role === "user";
+    state.thinkingCounts = {};
+    if (state.lastRenderedWasUser) {
+      upsertThinkingMessage(state.visibleMessages, state.thinkingCounts);
+    }
+    return true;
+  }
+
+  if (!state.lastRenderedWasUser) return false;
+
+  incrementThinkingCount(state.thinkingCounts, getEntryType(entry));
+  upsertThinkingMessage(state.visibleMessages, state.thinkingCounts);
+  return true;
+}
+
+function readSessionEntry(line: string): Record<string, unknown> | null {
   if (!line.trim()) return null;
 
   try {
     const entry = JSON.parse(line);
-    if (entry.type !== "message" || !entry.message) return null;
-
-    const role = String(entry.message.role || "message");
-    if (role !== "user" && !hasFinalPhase(entry)) return null;
-
-    const text = readText(entry.message.content);
-    if (!text) return null;
-
-    return {
-      role,
-      text,
-    };
+    return entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
   } catch {
     return null;
   }
 }
 
+function readRenderableSessionMessage(entry: Record<string, unknown>): SessionMessage | null {
+  const messageEntry = entry.message;
+  if (entry.type !== "message" || !messageEntry || typeof messageEntry !== "object") return null;
+
+  const message = messageEntry as Record<string, unknown>;
+  const role = String(message.role || "message");
+  if (role !== "user" && !hasFinalPhase(entry)) return null;
+
+  const text = readText(message.content);
+  if (!text) return null;
+
+  return {
+    role,
+    text,
+    kind: "message",
+  };
+}
+
+function getEntryType(entry: Record<string, unknown>): string {
+  const entryType = typeof entry.type === "string" ? entry.type : "unknown";
+  if (entryType !== "message") return entryType;
+
+  const message = entry.message;
+  if (!message || typeof message !== "object") return "message";
+
+  const role = (message as Record<string, unknown>).role;
+  return typeof role === "string" ? `message.${role}` : "message";
+}
+
+function incrementThinkingCount(counts: Record<string, number>, entryType: string): void {
+  counts[entryType] = (counts[entryType] || 0) + 1;
+}
+
+function upsertThinkingMessage(
+  visibleMessages: SessionMessage[],
+  counts: Record<string, number>,
+): void {
+  removeThinkingMessage(visibleMessages);
+  const thinkingMessage = createThinkingMessage(counts);
+  if (thinkingMessage) visibleMessages.push(thinkingMessage);
+}
+
+function removeThinkingMessage(visibleMessages: SessionMessage[]): void {
+  if (visibleMessages.at(-1)?.kind === "thinking") {
+    visibleMessages.pop();
+  }
+}
+
+function formatThinkingEntryType(entryType: string): string {
+  return entryType.startsWith("message.") ? entryType.slice("message.".length) : entryType;
+}
+
+function createThinkingMessage(counts: Record<string, number>): SessionMessage | null {
+  const entries = Object.entries(counts).filter(([, count]) => count > 0);
+  const text = entries
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([entryType, count]) => `${formatThinkingEntryType(entryType)}: ${count}`)
+    .join("\n");
+
+  return {
+    role: "thinking",
+    kind: "thinking",
+    text,
+    counts: { ...counts },
+  };
+}
+
 function createSessionFileWatcher(
   filePath: string,
   startPosition: number,
+  messageState: SessionMessageState,
   onMessages: (messages: SessionMessage[]) => void,
 ): vscode.Disposable | undefined {
   let disposed = false;
@@ -344,10 +450,11 @@ function createSessionFileWatcher(
       const lines = text.split(/\r\n|\r|\n/);
       pendingText = /\r\n$|\r$|\n$/.test(text) ? "" : lines.pop() || "";
 
-      const messages = lines
-        .map(readSessionMessageLine)
-        .filter((message): message is SessionMessage => Boolean(message));
-      onMessages(messages);
+      const changed = lines.reduce(
+        (didChange, line) => updateSessionMessageState(messageState, line) || didChange,
+        false,
+      );
+      if (changed) onMessages(messageState.visibleMessages);
     } catch {
       // Ignore transient reads while the session file is being appended.
     } finally {
