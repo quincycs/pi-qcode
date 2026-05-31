@@ -199,7 +199,7 @@ function groupSessions(
   sessions: RecentSession[],
 ): Record<string, RecentSession[]> {
   return sessions.reduce<Record<string, RecentSession[]>>((groups, session) => {
-    const group = dateGroup(session.createdAt);
+    const group = dateGroup(session.lastActiveAt);
     groups[group] = groups[group] || [];
     groups[group].push(session);
     return groups;
