@@ -234,7 +234,7 @@ export function renderSessionDetail(
       <div class="typeahead" id="typeahead" role="listbox" aria-label="Autocomplete suggestions" hidden>
         <div class="typeahead-list" id="typeahead-list"></div>
       </div>
-      <textarea class="message-input" id="message-input" rows="1" aria-label="Message" placeholder="Message"></textarea>
+      <textarea class="message-input" id="message-input" rows="1" aria-label="Message" placeholder="${escapeHtml(getMessagePlaceholder())}"></textarea>
       <button class="submit-button" id="submit-button" type="submit" aria-label="Submit">➤</button>
     </form>
   </main>
@@ -512,6 +512,12 @@ export function renderSessionDetail(
       }
     });
     input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        form.requestSubmit();
+        return;
+      }
+
       if (typeahead.hidden) return;
 
       if (event.key === 'Escape') {
@@ -606,6 +612,12 @@ export function renderSessionDetail(
   </script>
 </body>
 </html>`;
+}
+
+function getMessagePlaceholder(): string {
+  return process.platform === "darwin"
+    ? "Type message...⌘ Enter to send"
+    : "Type message...Ctrl Enter to send";
 }
 
 function toScriptString(value: string): string {
