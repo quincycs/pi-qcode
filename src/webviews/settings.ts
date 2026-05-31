@@ -48,6 +48,11 @@ export function renderSettings(
   .save-button,
   .cancel-button,
   .delete-button { padding: 4px 8px; }
+  .home-button {
+    padding: 2px 8px;
+    font-size: 18px;
+    line-height: 1;
+  }
   .edit-button {
     width: 26px;
     height: 24px;
@@ -155,7 +160,7 @@ export function renderSettings(
 <body>
   <main class="settings">
     <header class="header">
-      <button type="button" class="home-button" id="home-button">Home</button>
+      <button type="button" class="home-button" id="home-button" aria-label="Home" title="Home">←</button>
       <div class="title">Settings</div>
     </header>
     <section class="body">

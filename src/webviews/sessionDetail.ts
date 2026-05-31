@@ -46,7 +46,9 @@ export function renderSessionDetail(
     font: inherit;
   }
   .home-button {
-    padding: 4px 8px;
+    padding: 2px 8px;
+    font-size: 18px;
+    line-height: 1;
   }
   .submit-button {
     width: 28px;
@@ -222,7 +224,7 @@ export function renderSessionDetail(
 <body>
   <main class="detail">
     <header class="header">
-      <button type="button" class="home-button" id="home-button">Home</button>
+      <button type="button" class="home-button" id="home-button" aria-label="Home" title="Home">←</button>
       <div class="context-usage" id="context-usage" aria-label="Context window usage" title="Context usage unavailable">—</div>
     </header>
     <section class="body">
