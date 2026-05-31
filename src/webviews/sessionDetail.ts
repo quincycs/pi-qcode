@@ -5,7 +5,7 @@ export function renderSessionDetail(
   filePath: string,
   nonce: string,
   session: SessionDetail,
-  options: { autoFocus?: boolean } = {},
+  options: { autoFocus?: boolean; initialInput?: string } = {},
 ): string {
   return `<!doctype html>
 <html lang="en">
@@ -229,6 +229,14 @@ export function renderSessionDetail(
       }
       newMessages.forEach(appendMessage);
     };
+    const addToInput = (text) => {
+      if (!text) return;
+      input.value = input.value ? input.value + String.fromCharCode(10) + text : text;
+      resizeInput();
+      input.focus();
+    };
+    const initialInput = ${toScriptString(options.initialInput ?? "")};
+    if (initialInput) addToInput(initialInput);
 
     document.getElementById('home-button').addEventListener('click', () => {
       vscode.postMessage({ command: 'home' });
@@ -242,6 +250,11 @@ export function renderSessionDetail(
     window.addEventListener('message', (event) => {
       const data = event.data;
       if (!data) return;
+
+      if (data.command === 'addToInput') {
+        addToInput(data.text || '');
+        return;
+      }
 
       if (data.command === 'sessionFileReady') {
         form.dataset.filePath = data.filePath || '';
@@ -264,6 +277,7 @@ export function renderSessionDetail(
       data.messages.forEach(appendMessage);
       requestAnimationFrame(scrollLastMessageTop);
     });
+    vscode.postMessage({ command: 'ready' });
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       if (!input.value) return;
@@ -283,6 +297,10 @@ export function renderSessionDetail(
   </script>
 </body>
 </html>`;
+}
+
+function toScriptString(value: string): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
 function renderSessionDetailBody(session: SessionDetail): string {

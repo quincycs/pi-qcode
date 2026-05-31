@@ -8,6 +8,7 @@ import {
   isSessionFile,
   type SessionFileSnapshot,
 } from "./sessionFiles";
+import { delay } from "./utils";
 
 interface MessageSession {
   guid: string;
@@ -39,7 +40,9 @@ export async function sendSessionMessage(
   }
 
   if (!isSessionFile(filePath)) {
-    vscode.window.showErrorMessage("Unable to send message: invalid session file.");
+    vscode.window.showErrorMessage(
+      "Unable to send message: invalid session file.",
+    );
     return {};
   }
 
@@ -70,7 +73,9 @@ async function startNewSessionMessage(
 ): Promise<SendSessionMessageResult> {
   const cwd = getWorkspaceCwd();
   if (!cwd) {
-    vscode.window.showErrorMessage("Unable to start session: no workspace folder is open.");
+    vscode.window.showErrorMessage(
+      "Unable to start session: no workspace folder is open.",
+    );
     return {};
   }
 
@@ -109,11 +114,10 @@ async function waitForNewSessionFile(
   return undefined;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function sendSocketMessage(target: string, message: MsgMessage): Promise<string> {
+function sendSocketMessage(
+  target: string,
+  message: MsgMessage,
+): Promise<string> {
   return new Promise((resolve) => {
     const socket = net.createConnection(getMsgSocketPath(target));
     let reply = "";
@@ -154,7 +158,11 @@ function getWorkspaceCwd(): string | undefined {
   return workspaceFolder ? workspaceFolder.uri.fsPath : undefined;
 }
 
-function buildSessionMessageCommand(sessionFilePath: string, guid: string, message: string): string {
+function buildSessionMessageCommand(
+  sessionFilePath: string,
+  guid: string,
+  message: string,
+): string {
   return [
     "pi",
     "--session",
@@ -165,13 +173,18 @@ function buildSessionMessageCommand(sessionFilePath: string, guid: string, messa
 }
 
 function buildNewSessionMessageCommand(guid: string, message: string): string {
-  return ["pi", shellEscape(`/msg-on ${guid}`), shellEscape(encodeMessageArgument(message))].join(
-    " ",
-  );
+  return [
+    "pi",
+    shellEscape(`/msg-on ${guid}`),
+    shellEscape(encodeMessageArgument(message)),
+  ].join(" ");
 }
 
 function encodeMessageArgument(message: string): string {
-  return message.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n/g, "\\n");
+  return message
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\n/g, "\\n");
 }
 
 function shellEscape(value: string): string {

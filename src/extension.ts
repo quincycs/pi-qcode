@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { sendSessionMessage, type MessageSessionMap } from "./messaging";
 import type { SessionDetail } from "./sessionFiles";
@@ -13,15 +14,43 @@ type Route = { name: "home" } | { name: "sessionDetail"; filePath?: string };
 type WebviewMessage =
   | { command: "openSession"; filePath?: string }
   | { command: "newSession" }
+  | { command: "ready" }
   | { command: "home" }
   | { command: "sendMessage"; filePath?: string; text?: string };
 
 export function activate(context: vscode.ExtensionContext): void {
+  let addToActiveQcodeInput: (() => void) | undefined;
+  let pendingInputText = "";
+
+  const queueInputText = (text: string) => {
+    pendingInputText = pendingInputText ? `${pendingInputText}\n${text}` : text;
+  };
+
   context.subscriptions.push(
+    vscode.commands.registerCommand("qcode.addToQcode", async () => {
+      const selectedText = getSelectedEditorText();
+      if (!selectedText) return;
+
+      queueInputText(selectedText);
+
+      if (!addToActiveQcodeInput) {
+        await vscode.commands.executeCommand("qcode.home.focus");
+      }
+
+      if (!addToActiveQcodeInput) {
+        vscode.window.showInformationMessage(
+          "Open QCode to add selected text to its input.",
+        );
+        return;
+      }
+
+      addToActiveQcodeInput();
+    }),
     vscode.window.registerWebviewViewProvider(viewType, {
       resolveWebviewView(view) {
         let currentRoute: Route = { name: "home" };
         let sessionWatcher: vscode.Disposable | undefined;
+        let detailWebviewReady = false;
         const messageSessions: MessageSessionMap = new Map();
 
         view.webview.options = { enableScripts: true };
@@ -34,27 +63,37 @@ export function activate(context: vscode.ExtensionContext): void {
 
         const showHome = () => {
           stopSessionWatcher();
+          detailWebviewReady = false;
           currentRoute = { name: "home" };
           view.webview.html = renderHome(getNonce(), getWorkspaceCwd());
         };
 
         const showSessionDetail = (filePath: string) => {
           stopSessionWatcher();
+          detailWebviewReady = false;
           const session = readSessionDetail(filePath);
           currentRoute = { name: "sessionDetail", filePath };
-          view.webview.html = renderSessionDetail(filePath, getNonce(), session);
+          view.webview.html = renderSessionDetail(
+            filePath,
+            getNonce(),
+            session,
+          );
           sessionWatcher = watchSessionDetail(session, view.webview);
         };
 
         const showNewSessionDetail = () => {
           stopSessionWatcher();
+          detailWebviewReady = false;
           const session: SessionDetail = { title: "New Session", messages: [] };
           currentRoute = { name: "sessionDetail" };
-          view.webview.html = renderSessionDetail("", getNonce(), session, { autoFocus: true });
+          view.webview.html = renderSessionDetail("", getNonce(), session, {
+            autoFocus: true,
+          });
         };
 
         const attachSessionFileToCurrentDetail = (filePath: string) => {
-          if (currentRoute.name !== "sessionDetail" || currentRoute.filePath) return;
+          if (currentRoute.name !== "sessionDetail" || currentRoute.filePath)
+            return;
 
           const session = readSessionDetail(filePath);
           currentRoute = { name: "sessionDetail", filePath };
@@ -81,10 +120,39 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         };
 
+        const deliverPendingInput = () => {
+          if (
+            !pendingInputText ||
+            !detailWebviewReady ||
+            currentRoute.name !== "sessionDetail"
+          ) {
+            return;
+          }
+
+          const text = pendingInputText;
+          view.webview.postMessage({ command: "addToInput", text }).then((sent) => {
+            if (sent && pendingInputText === text) pendingInputText = "";
+          });
+        };
+
+        addToActiveQcodeInput = () => {
+          view.show?.(true);
+          if (currentRoute.name !== "sessionDetail") {
+            showNewSessionDetail();
+          }
+
+          deliverPendingInput();
+        };
+
         showHome();
 
         view.webview.onDidReceiveMessage((message: WebviewMessage) => {
           if (!message || typeof message.command !== "string") return;
+
+          if (message.command === "ready") {
+            detailWebviewReady = true;
+            deliverPendingInput();
+          }
 
           if (message.command === "openSession") {
             showSessionDetail(String(message.filePath || ""));
@@ -108,16 +176,55 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (currentRoute.name === "sessionDetail") {
             if (currentRoute.filePath) showSessionDetail(currentRoute.filePath);
-            else showNewSessionDetail();
           } else {
             showHome();
           }
         });
 
-        context.subscriptions.push({ dispose: stopSessionWatcher });
+        context.subscriptions.push({
+          dispose() {
+            stopSessionWatcher();
+            addToActiveQcodeInput = undefined;
+          },
+        });
       },
     }),
   );
+}
+
+function getSelectedEditorText(): string {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return "";
+
+  const selectedText = editor.selections
+    .map((selection) => editor.document.getText(selection))
+    .filter(Boolean)
+    .join("\n");
+  if (!selectedText) return "";
+
+  return `@${getRelativeEditorPath(editor)}\n\`\`\`\n${selectedText}\n\`\`\``;
+}
+
+function getRelativeEditorPath(editor: vscode.TextEditor): string {
+  if (editor.document.uri.scheme !== "file") {
+    return vscode.workspace.asRelativePath(editor.document.uri, false);
+  }
+
+  const filePath = path.resolve(editor.document.uri.fsPath);
+  const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+  const workspaceFolder = workspaceFolders
+    .map((folder) => path.resolve(folder.uri.fsPath))
+    .sort((a, b) => b.length - a.length)
+    .find((folderPath) => isPathInside(filePath, folderPath));
+
+  if (!workspaceFolder) return editor.document.uri.fsPath;
+
+  return path.relative(workspaceFolder, filePath).split(path.sep).join("/");
+}
+
+function isPathInside(filePath: string, folderPath: string): boolean {
+  const relativePath = path.relative(folderPath, filePath);
+  return Boolean(relativePath) && !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
 }
 
 function getWorkspaceCwd(): string | undefined {

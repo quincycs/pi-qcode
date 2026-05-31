@@ -12,7 +12,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:qcode.home"
+    "onView:qcode.home",
+    "onCommand:qcode.addToQcode"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -33,7 +34,30 @@
           "name": "Home"
         }
       ]
-    }
+    },
+    "commands": [
+      {
+        "command": "qcode.addToQcode",
+        "title": "Add to QCode"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "qcode.addToQcode",
+          "when": "editorHasSelection",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "qcode.addToQcode",
+        "key": "ctrl+;",
+        "mac": "cmd+;",
+        "when": "editorTextFocus && editorHasSelection"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
