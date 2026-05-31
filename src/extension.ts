@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { searchFileSuggestions } from "./fileSuggestions";
+import { fileReferenceExists, openExternalUrl, openFileReference } from "./fileReferences";
 import { searchHashAutocompleteSuggestions } from "./hashAutocomplete";
 import { sendSessionMessage, type MessageSessionMap } from "./messaging";
 import {
@@ -31,6 +32,9 @@ type WebviewMessage =
   | { command: "saveSettings"; settings?: unknown }
   | { command: "confirmDeleteHashOption"; index?: number; label?: string }
   | { command: "sendMessage"; filePath?: string; text?: string }
+  | { command: "openFileReference"; value?: string }
+  | { command: "openExternalUrl"; value?: string }
+  | { command: "resolveFileReferences"; requestId?: number; values?: unknown }
   | { command: "searchFiles"; requestId?: number; query?: string }
   | { command: "searchHashOptions"; requestId?: number; query?: string };
 
@@ -148,6 +152,35 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         };
 
+        const handleOpenFileReference = async (
+          message: Extract<WebviewMessage, { command: "openFileReference" }>,
+        ) => {
+          await openFileReference(String(message.value || ""));
+        };
+
+        const handleOpenExternalUrl = async (
+          message: Extract<WebviewMessage, { command: "openExternalUrl" }>,
+        ) => {
+          await openExternalUrl(String(message.value || ""));
+        };
+
+        const handleResolveFileReferences = async (
+          message: Extract<WebviewMessage, { command: "resolveFileReferences" }>,
+        ) => {
+          const values = Array.isArray(message.values)
+            ? [...new Set(message.values.map((value) => String(value || "")).filter(Boolean))]
+            : [];
+          const results: Record<string, boolean> = {};
+          await Promise.all(values.map(async (value) => {
+            results[value] = await fileReferenceExists(value);
+          }));
+          await view.webview.postMessage({
+            command: "fileReferenceResolution",
+            requestId: Number(message.requestId || 0),
+            results,
+          });
+        };
+
         const handleSearchFiles = async (
           message: Extract<WebviewMessage, { command: "searchFiles" }>,
         ) => {
@@ -257,6 +290,18 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (message.command === "sendMessage") {
             void handleSendMessage(message);
+          }
+
+          if (message.command === "openFileReference") {
+            void handleOpenFileReference(message);
+          }
+
+          if (message.command === "openExternalUrl") {
+            void handleOpenExternalUrl(message);
+          }
+
+          if (message.command === "resolveFileReferences") {
+            void handleResolveFileReferences(message);
           }
 
           if (message.command === "searchFiles") {

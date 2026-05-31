@@ -1,5 +1,10 @@
-import type { SessionDetail, SessionMessage } from "../sessionFiles";
+import type { SessionDetail } from "../sessionFiles";
 import { escapeHtml } from "../utils";
+import {
+  messageRenderingScript,
+  messageRenderingStyles,
+  renderSessionMessage,
+} from "./messageRendering";
 
 export function renderSessionDetail(
   filePath: string,
@@ -116,13 +121,7 @@ export function renderSessionDetail(
     letter-spacing: 0.07em;
     text-transform: uppercase;
   }
-  .message-text {
-    margin: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font: inherit;
-    line-height: 1.45;
-  }
+${messageRenderingStyles}
   .empty-messages {
     color: var(--vscode-descriptionForeground);
     line-height: 1.45;
@@ -268,6 +267,7 @@ export function renderSessionDetail(
       empty.textContent = 'No messages found in this session.';
       messages.append(empty);
     };
+${messageRenderingScript}
     const appendMessage = (message) => {
       if (!messages) return;
 
@@ -294,9 +294,8 @@ export function renderSessionDetail(
         article.append(label);
       }
 
-      const text = document.createElement('pre');
-      text.className = 'message-text';
-      text.textContent = message.text || '';
+      const text = document.createElement('div');
+      qcodeMessageRendering.renderMessageTextElement(text, message);
 
       article.append(text);
       messages.append(article);
@@ -495,6 +494,8 @@ export function renderSessionDetail(
       input.focus();
     };
     const initialInput = ${toScriptString(options.initialInput ?? "")};
+    qcodeMessageRendering.installClickHandlers(vscode);
+    qcodeMessageRendering.renderExistingMessages();
     updateContextUsage(${toScriptJson(session.contextUsage)});
     if (initialInput) addToInput(initialInput);
 
@@ -644,15 +645,3 @@ function renderSessionDetailBody(session: SessionDetail): string {
   return `<div class="messages" id="messages">${messages}</div>`;
 }
 
-function renderSessionMessage(message: SessionMessage): string {
-  const roleClass = message.kind === "thinking"
-    ? "role-thinking"
-    : message.role === "user"
-      ? "role-user"
-      : "role-assistant";
-  const label = message.kind === "thinking" ? '<div class="thinking-label">Thinking...</div>' : "";
-  return `<article class="session-message ${roleClass}">
-    ${label}
-    <pre class="message-text">${escapeHtml(message.text)}</pre>
-  </article>`;
-}
