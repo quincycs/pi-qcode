@@ -231,6 +231,7 @@ function parseSessionFile(filePath: string): RecentSession | null {
     let model = "unknown";
     let messageCount = 0;
     let firstUserMessage = "";
+    let latestUserMessage = "";
     let totalTokens = 0;
     let createdAt = stat.birthtime;
     let lastActiveAt = stat.mtime;
@@ -255,10 +256,12 @@ function parseSessionFile(filePath: string): RecentSession | null {
         }
 
         if (entry.type === "message" && entry.message) {
-          if (entry.message.role === "user" && !firstUserMessage) {
+          if (entry.message.role === "user") {
             const text = readText(entry.message.content);
             if (text && !text.startsWith("You are running inside VS Code")) {
-              firstUserMessage = text.slice(0, 160).replace(/\s+/g, " ").trim();
+              const preview = text.slice(0, 160).replace(/\s+/g, " ").trim();
+              if (!firstUserMessage) firstUserMessage = preview;
+              latestUserMessage = preview;
             }
           }
 
@@ -283,7 +286,7 @@ function parseSessionFile(filePath: string): RecentSession | null {
       filePath,
       fileName: path.basename(filePath),
       title: firstUserMessage || path.basename(filePath),
-      preview: firstUserMessage || "(no messages yet)",
+      preview: latestUserMessage || firstUserMessage || "(no messages yet)",
       createdAt,
       lastActiveAt,
     };

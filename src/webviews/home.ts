@@ -78,7 +78,7 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
     color: inherit;
     background: transparent;
     border: 0;
-    border-left: 2px solid transparent;
+    border-right: 2px solid transparent;
     font: inherit;
     text-align: left;
     cursor: pointer;
@@ -116,7 +116,7 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
     padding: 5px 7px;
     color: var(--vscode-descriptionForeground);
     background: var(--vscode-input-background);
-    border-left: 2px solid var(--vscode-focusBorder, #007acc);
+    border-right: 2px solid var(--vscode-focusBorder, #007acc);
     border-radius: 3px;
     font-size: 10px;
     line-height: 1.35;
