@@ -33,7 +33,7 @@ export function renderSessionDetail(
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 12px;
+    padding: 10px 2px;
     border-bottom: 1px solid var(--vscode-widget-border, transparent);
   }
   .home-button,
@@ -73,7 +73,8 @@ export function renderSessionDetail(
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
-    padding: 16px 12px;
+    margin-right: -7px;
+    padding: 16px 9px 16px 2px;
   }
   .messages {
     display: flex;
@@ -128,7 +129,7 @@ export function renderSessionDetail(
     display: flex;
     align-items: flex-end;
     gap: 6px;
-    padding: 8px;
+    padding: 3px 0;
     border-top: 1px solid var(--vscode-widget-border, transparent);
   }
   .message-input {
@@ -155,9 +156,9 @@ export function renderSessionDetail(
   }
   .typeahead {
     position: absolute;
-    right: 42px;
+    right: 34px;
     bottom: calc(100% + 4px);
-    left: 8px;
+    left: 0;
     z-index: 10;
     max-height: 220px;
     overflow-y: auto;

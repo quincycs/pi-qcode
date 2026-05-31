@@ -15,18 +15,20 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
   *, *::before, *::after { box-sizing: border-box; }
   body {
     margin: 0;
+    overflow: hidden;
     color: var(--vscode-foreground);
     background: var(--vscode-sideBar-background, var(--vscode-editor-background));
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
   }
   .home {
-    min-height: 100vh;
+    height: 100vh;
     display: flex;
     flex-direction: column;
+    min-height: 0;
   }
   .header {
-    padding: 14px 12px 10px;
+    padding: 14px 2px 10px;
     border-bottom: 1px solid var(--vscode-widget-border, transparent);
   }
   .header-row {
@@ -42,18 +44,31 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
   }
   .new-session-button,
   .settings-button {
-    padding: 4px 8px;
-    color: var(--vscode-button-foreground);
-    background: var(--vscode-button-background);
     border: 0;
     border-radius: 3px;
     cursor: pointer;
     font: inherit;
-    font-size: 11px;
+    font-size: 17px;
+    padding: 4px 14px;
   }
-  .new-session-button:hover,
-  .settings-button:hover {
+  .new-session-button > span,
+  .settings-button > span {
+    position: relative;
+    top: -1px;
+  }
+  .new-session-button {
+    color: var(--vscode-button-foreground);
+    background: var(--vscode-button-background);
+  }
+  .settings-button {
+    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+    background: var(--vscode-button-secondaryBackground, transparent);
+  }
+  .new-session-button:hover {
     background: var(--vscode-button-hoverBackground);
+  }
+  .settings-button:hover {
+    background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground));
   }
   .eyebrow {
     color: var(--vscode-descriptionForeground);
@@ -67,9 +82,15 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
     font-size: 16px;
     font-weight: 600;
   }
-  .list { padding: 4px 0 12px; }
+  .list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    margin-right: -7px;
+    padding: 4px 7px 12px 0;
+  }
   .group-header {
-    padding: 12px 12px 5px;
+    padding: 12px 2px 5px;
     color: var(--vscode-descriptionForeground);
     font-size: 10px;
     font-weight: 700;
@@ -80,7 +101,7 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
     display: block;
     width: 100%;
     margin: 0;
-    padding: 8px 12px;
+    padding: 8px 2px;
     color: inherit;
     background: transparent;
     border: 0;
@@ -129,7 +150,7 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
     word-break: break-word;
   }
   .empty {
-    padding: 28px 18px;
+    padding: 28px 8px;
     color: var(--vscode-descriptionForeground);
     text-align: center;
     font-size: 12px;
@@ -140,12 +161,12 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
 <body>
   <main class="home">
     <section class="header">
-      <div class="eyebrow">Home</div>
+      <div class="eyebrow">QCODE</div>
       <div class="header-row">
-        <h1>Recent Pi Sessions</h1>
+        <h1>Sessions</h1>
         <div class="header-actions">
-          <button type="button" class="settings-button" id="settings-button">Settings</button>
-          <button type="button" class="new-session-button" id="new-session-button">New</button>
+          <button type="button" class="new-session-button" id="new-session-button"><span>+</span></button>
+          <button type="button" class="settings-button" id="settings-button" aria-label="Settings" title="Settings"><span>⚙</span></button>
         </div>
       </div>
     </section>
@@ -174,7 +195,9 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
 </html>`;
 }
 
-function groupSessions(sessions: RecentSession[]): Record<string, RecentSession[]> {
+function groupSessions(
+  sessions: RecentSession[],
+): Record<string, RecentSession[]> {
   return sessions.reduce<Record<string, RecentSession[]>>((groups, session) => {
     const group = dateGroup(session.createdAt);
     groups[group] = groups[group] || [];
@@ -183,7 +206,10 @@ function groupSessions(sessions: RecentSession[]): Record<string, RecentSession[
   }, {});
 }
 
-function renderGroups(groups: Record<string, RecentSession[]>, total: number): string {
+function renderGroups(
+  groups: Record<string, RecentSession[]>,
+  total: number,
+): string {
   if (!total) {
     return '<div class="empty">No Pi sessions found.<br>Start Pi to create one.</div>';
   }
@@ -231,11 +257,13 @@ function dateGroup(date: Date): string {
 }
 
 function timeSince(date: Date): string {
-  const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60_000));
+  const minutes = Math.max(
+    0,
+    Math.floor((Date.now() - date.getTime()) / 60_000),
+  );
   if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 }
-

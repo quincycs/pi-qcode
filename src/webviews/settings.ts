@@ -15,17 +15,23 @@ export function renderSettings(
   *, *::before, *::after { box-sizing: border-box; }
   body {
     margin: 0;
+    overflow: hidden;
     color: var(--vscode-foreground);
     background: var(--vscode-sideBar-background, var(--vscode-editor-background));
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
   }
-  .settings { min-height: 100vh; display: flex; flex-direction: column; }
+  .settings {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
   .header {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 12px;
+    padding: 10px 2px;
     border-bottom: 1px solid var(--vscode-widget-border, transparent);
   }
   button {
@@ -53,7 +59,13 @@ export function renderSettings(
     background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
   }
   .title { font-size: 13px; font-weight: 600; }
-  .body { padding: 12px; }
+  .body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    margin-right: -7px;
+    padding: 12px 9px 12px 2px;
+  }
   .description {
     margin: 0 0 12px;
     color: var(--vscode-descriptionForeground);
