@@ -123,6 +123,7 @@ export function renderSessionDetail(
     line-height: 1.45;
   }
   .footer {
+    position: relative;
     flex: 0 0 auto;
     display: flex;
     align-items: flex-end;
@@ -149,6 +150,65 @@ export function renderSessionDetail(
     outline: 1px solid var(--vscode-focusBorder, #007acc);
     outline-offset: -1px;
   }
+  .typeahead[hidden] {
+    display: none !important;
+  }
+  .typeahead {
+    position: absolute;
+    right: 42px;
+    bottom: calc(100% + 4px);
+    left: 8px;
+    z-index: 10;
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 4px;
+    color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+    background: var(--vscode-dropdown-background, var(--vscode-input-background));
+    border: 1px solid var(--vscode-widget-border, var(--vscode-input-border, transparent));
+    border-radius: 4px;
+    box-shadow: 0 3px 8px rgb(0 0 0 / 28%);
+  }
+  .typeahead-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .typeahead-item {
+    width: 100%;
+    min-width: 0;
+    padding: 5px 7px;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+  }
+  .typeahead-item:hover,
+  .typeahead-item.is-selected {
+    color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+    background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
+  }
+  .typeahead-label,
+  .typeahead-description {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .typeahead-label {
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .typeahead-description,
+  .typeahead-empty {
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+  }
+  .typeahead-empty {
+    padding: 6px 7px;
+  }
 </style>
 </head>
 <body>
@@ -161,6 +221,9 @@ export function renderSessionDetail(
       ${renderSessionDetailBody(session)}
     </section>
     <form class="footer" id="message-form" data-file-path="${escapeHtml(filePath)}">
+      <div class="typeahead" id="file-typeahead" role="listbox" aria-label="File suggestions" hidden>
+        <div class="typeahead-list" id="file-typeahead-list"></div>
+      </div>
       <textarea class="message-input" id="message-input" rows="1" aria-label="Message" placeholder="Message"></textarea>
       <button class="submit-button" id="submit-button" type="submit" aria-label="Submit">➤</button>
     </form>
@@ -171,6 +234,14 @@ export function renderSessionDetail(
     const input = document.getElementById('message-input');
     const title = document.getElementById('session-title');
     const messages = document.getElementById('messages');
+    const typeahead = document.getElementById('file-typeahead');
+    const typeaheadList = document.getElementById('file-typeahead-list');
+    let mentionState = null;
+    let fileSuggestions = [];
+    let selectedSuggestionIndex = 0;
+    let searchRequestId = 0;
+    let searchTimer = undefined;
+
     const resizeInput = () => {
       input.style.height = 'auto';
       const maxHeight = Number.parseFloat(getComputedStyle(input).maxHeight);
@@ -229,6 +300,111 @@ export function renderSessionDetail(
       }
       newMessages.forEach(appendMessage);
     };
+    const hideTypeahead = () => {
+      mentionState = null;
+      fileSuggestions = [];
+      selectedSuggestionIndex = 0;
+      searchRequestId += 1;
+      typeahead.hidden = true;
+      typeaheadList.replaceChildren();
+      if (searchTimer) window.clearTimeout(searchTimer);
+    };
+    const showTypeaheadMessage = (message) => {
+      typeaheadList.replaceChildren();
+      const empty = document.createElement('div');
+      empty.className = 'typeahead-empty';
+      empty.textContent = message;
+      typeaheadList.append(empty);
+      typeahead.hidden = false;
+    };
+    const renderTypeahead = () => {
+      typeaheadList.replaceChildren();
+      if (!fileSuggestions.length) {
+        showTypeaheadMessage('No matching files');
+        return;
+      }
+
+      fileSuggestions.forEach((item, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'typeahead-item' + (index === selectedSuggestionIndex ? ' is-selected' : '');
+        button.setAttribute('role', 'option');
+        button.setAttribute('aria-selected', index === selectedSuggestionIndex ? 'true' : 'false');
+        button.dataset.index = String(index);
+
+        const label = document.createElement('span');
+        label.className = 'typeahead-label';
+        label.textContent = item.label || item.path || '';
+
+        const description = document.createElement('span');
+        description.className = 'typeahead-description';
+        description.textContent = item.description || item.path || '';
+
+        button.append(label, description);
+        button.addEventListener('mouseenter', () => {
+          selectedSuggestionIndex = index;
+        });
+        button.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+          insertSelectedFileSuggestion(index);
+        });
+        typeaheadList.append(button);
+      });
+      typeahead.hidden = false;
+    };
+    const getMentionState = () => {
+      const cursorPosition = input.selectionStart ?? input.value.length;
+      if ((input.selectionEnd ?? cursorPosition) !== cursorPosition) return null;
+
+      const beforeCursor = input.value.slice(0, cursorPosition);
+      const atIndex = beforeCursor.lastIndexOf('@');
+      if (atIndex === -1) return null;
+
+      const query = beforeCursor.slice(atIndex + 1);
+      if (/\s/.test(query)) return null;
+      if (query.toLowerCase().startsWith('http')) return null;
+
+      return { atIndex, cursorPosition, query };
+    };
+    const updateTypeahead = () => {
+      const state = getMentionState();
+      if (!state) {
+        hideTypeahead();
+        return;
+      }
+
+      mentionState = state;
+      showTypeaheadMessage('Searching files...');
+      if (searchTimer) window.clearTimeout(searchTimer);
+      const requestId = ++searchRequestId;
+      searchTimer = window.setTimeout(() => {
+        vscode.postMessage({
+          command: 'searchFiles',
+          requestId,
+          query: state.query,
+        });
+      }, 100);
+    };
+    const formatMentionPath = (filePath) => /\s/.test(filePath) ? '"' + filePath + '"' : filePath;
+    const insertSelectedFileSuggestion = (index = selectedSuggestionIndex) => {
+      const item = fileSuggestions[index];
+      if (!item || !item.path) return;
+
+      const state = mentionState || getMentionState();
+      if (!state) return;
+
+      const formattedPath = formatMentionPath(item.path);
+      const beforeMention = input.value.slice(0, state.atIndex + 1);
+      const afterMention = input.value.slice(state.cursorPosition);
+      const suffix = afterMention.startsWith(' ') ? afterMention : ' ' + afterMention;
+      input.value = beforeMention + formattedPath + suffix;
+
+      const nextCursorPosition = beforeMention.length + formattedPath.length + 1;
+      input.setSelectionRange(nextCursorPosition, nextCursorPosition);
+      resizeInput();
+      hideTypeahead();
+      input.focus();
+    };
     const addToInput = (text) => {
       if (!text) return;
       input.value = input.value ? input.value + String.fromCharCode(10) + text : text;
@@ -241,7 +417,46 @@ export function renderSessionDetail(
     document.getElementById('home-button').addEventListener('click', () => {
       vscode.postMessage({ command: 'home' });
     });
-    input.addEventListener('input', resizeInput);
+    input.addEventListener('input', () => {
+      resizeInput();
+      updateTypeahead();
+    });
+    input.addEventListener('click', updateTypeahead);
+    input.addEventListener('keyup', (event) => {
+      if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+        updateTypeahead();
+      }
+    });
+    input.addEventListener('keydown', (event) => {
+      if (typeahead.hidden) return;
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        hideTypeahead();
+        return;
+      }
+
+      if (!fileSuggestions.length) return;
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        selectedSuggestionIndex = (selectedSuggestionIndex + 1) % fileSuggestions.length;
+        renderTypeahead();
+        return;
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        selectedSuggestionIndex = (selectedSuggestionIndex - 1 + fileSuggestions.length) % fileSuggestions.length;
+        renderTypeahead();
+        return;
+      }
+
+      if (event.key === 'Tab' || event.key === 'Enter') {
+        event.preventDefault();
+        insertSelectedFileSuggestion();
+      }
+    });
     resizeInput();
     if (${options.autoFocus ? "true" : "false"}) {
       requestAnimationFrame(() => input.focus());
@@ -270,6 +485,14 @@ export function renderSessionDetail(
         return;
       }
 
+      if (data.command === 'fileSuggestions') {
+        if (data.requestId !== searchRequestId) return;
+        fileSuggestions = Array.isArray(data.items) ? data.items : [];
+        selectedSuggestionIndex = 0;
+        renderTypeahead();
+        return;
+      }
+
       if (data.command !== 'appendMessages' || !Array.isArray(data.messages)) {
         return;
       }
@@ -283,6 +506,7 @@ export function renderSessionDetail(
       if (!input.value) return;
 
       const sentText = input.value;
+      hideTypeahead();
       vscode.postMessage({
         command: 'sendMessage',
         filePath: form.dataset.filePath || '',

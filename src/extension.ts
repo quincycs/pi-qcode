@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { searchFileSuggestions } from "./fileSuggestions";
 import { sendSessionMessage, type MessageSessionMap } from "./messaging";
 import type { SessionDetail } from "./sessionFiles";
 import { readSessionDetail, watchSessionDetail } from "./sessionFiles";
@@ -16,7 +17,8 @@ type WebviewMessage =
   | { command: "newSession" }
   | { command: "ready" }
   | { command: "home" }
-  | { command: "sendMessage"; filePath?: string; text?: string };
+  | { command: "sendMessage"; filePath?: string; text?: string }
+  | { command: "searchFiles"; requestId?: number; query?: string };
 
 export function activate(context: vscode.ExtensionContext): void {
   let addToActiveQcodeInput: (() => void) | undefined;
@@ -120,6 +122,18 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         };
 
+        const handleSearchFiles = async (
+          message: Extract<WebviewMessage, { command: "searchFiles" }>,
+        ) => {
+          const requestId = Number(message.requestId || 0);
+          const items = await searchFileSuggestions(String(message.query || ""));
+          await view.webview.postMessage({
+            command: "fileSuggestions",
+            requestId,
+            items,
+          });
+        };
+
         const deliverPendingInput = () => {
           if (
             !pendingInputText ||
@@ -168,6 +182,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (message.command === "sendMessage") {
             void handleSendMessage(message);
+          }
+
+          if (message.command === "searchFiles") {
+            void handleSearchFiles(message);
           }
         });
 
