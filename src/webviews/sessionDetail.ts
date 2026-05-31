@@ -456,7 +456,6 @@ ${messageRenderingScript}
         });
       }, 100);
     };
-    const formatMentionPath = (filePath) => /\s/.test(filePath) ? '"' + filePath + '"' : filePath;
     const insertSelectedCompletion = (index = selectedSuggestionIndex) => {
       const item = completionSuggestions[index];
       if (!item) return;
@@ -474,12 +473,12 @@ ${messageRenderingScript}
         input.setSelectionRange(nextCursorPosition, nextCursorPosition);
       } else {
         if (!item.path) return;
-        const formattedPath = formatMentionPath(item.path);
+        const mentionPath = String(item.path || '');
         const beforeMention = input.value.slice(0, state.triggerIndex + 1);
         const afterMention = input.value.slice(state.cursorPosition);
         const suffix = afterMention.startsWith(' ') ? afterMention : ' ' + afterMention;
-        input.value = beforeMention + formattedPath + suffix;
-        const nextCursorPosition = beforeMention.length + formattedPath.length + 1;
+        input.value = beforeMention + mentionPath + suffix;
+        const nextCursorPosition = beforeMention.length + mentionPath.length + 1;
         input.setSelectionRange(nextCursorPosition, nextCursorPosition);
       }
 
