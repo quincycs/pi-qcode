@@ -127,7 +127,29 @@ export function getNewestSessionFileForCwd(cwd: string): SessionFileSnapshot | u
     .sort((a, b) => b.createdAtMs - a.createdAtMs)[0];
 }
 
-export function readText(content: unknown): string {
+function hasFinalPhase(value: unknown): boolean {
+  if (typeof value === "string") {
+    if (!value.includes('"phase"')) return false;
+
+    try {
+      return hasFinalPhase(JSON.parse(value));
+    } catch {
+      return false;
+    }
+  }
+
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some(hasFinalPhase);
+
+  const record = value as Record<string, unknown>;
+  return (
+    record.phase === "final" ||
+    record.phase === "final_answer" ||
+    Object.values(record).some(hasFinalPhase)
+  );
+}
+
+function readText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
@@ -269,11 +291,14 @@ function readSessionMessageLine(line: string): SessionMessage | null {
     const entry = JSON.parse(line);
     if (entry.type !== "message" || !entry.message) return null;
 
+    const role = String(entry.message.role || "message");
+    if (role !== "user" && !hasFinalPhase(entry)) return null;
+
     const text = readText(entry.message.content);
     if (!text) return null;
 
     return {
-      role: String(entry.message.role || "message"),
+      role,
       text,
     };
   } catch {

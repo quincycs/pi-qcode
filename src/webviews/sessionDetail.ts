@@ -84,15 +84,14 @@ export function renderSessionDetail(
     padding: 10px;
     background: var(--vscode-input-background);
     border: 1px solid var(--vscode-widget-border, transparent);
+    border-right: 3px solid var(--vscode-widget-border, transparent);
     border-radius: 5px;
   }
-  .message-role {
-    margin-bottom: 6px;
-    color: var(--vscode-descriptionForeground);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
+  .session-message.role-user {
+    border-right-color: var(--vscode-charts-blue, #3794ff);
+  }
+  .session-message.role-assistant {
+    border-right-color: var(--vscode-widget-border, transparent);
   }
   .message-text {
     margin: 0;
@@ -182,17 +181,13 @@ export function renderSessionDetail(
       if (empty) empty.remove();
 
       const article = document.createElement('article');
-      article.className = 'session-message';
-
-      const role = document.createElement('div');
-      role.className = 'message-role';
-      role.textContent = message.role || 'message';
+      article.className = 'session-message ' + (message.role === 'user' ? 'role-user' : 'role-assistant');
 
       const text = document.createElement('pre');
       text.className = 'message-text';
       text.textContent = message.text || '';
 
-      article.append(role, text);
+      article.append(text);
       messages.append(article);
     };
     const replaceMessages = (newMessages) => {
@@ -268,8 +263,8 @@ function renderSessionDetailBody(session: SessionDetail): string {
 }
 
 function renderSessionMessage(message: SessionMessage): string {
-  return `<article class="session-message">
-    <div class="message-role">${escapeHtml(message.role)}</div>
+  const roleClass = message.role === "user" ? "role-user" : "role-assistant";
+  return `<article class="session-message ${roleClass}">
     <pre class="message-text">${escapeHtml(message.text)}</pre>
   </article>`;
 }
