@@ -30,6 +30,11 @@ export interface SessionDetail {
   error?: string;
 }
 
+export interface SessionFileSnapshot {
+  filePath: string;
+  createdAtMs: number;
+}
+
 export function getRecentSessions(): RecentSession[] {
   return getSessionFiles()
     .map(parseSessionFile)
@@ -99,6 +104,28 @@ export function getSessionsDir(): string {
   return path.join(os.homedir(), ".pi", "agent", "sessions");
 }
 
+export function getSessionFolderForCwd(cwd: string): string {
+  return path.join(getSessionsDir(), getSessionFolderName(cwd));
+}
+
+export function getNewestSessionFileForCwd(cwd: string): SessionFileSnapshot | undefined {
+  const sessionFolder = getSessionFolderForCwd(cwd);
+  if (!fs.existsSync(sessionFolder)) return undefined;
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(sessionFolder, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+    .map((entry) => snapshotSessionFile(path.join(sessionFolder, entry.name)))
+    .filter((snapshot): snapshot is SessionFileSnapshot => Boolean(snapshot))
+    .sort((a, b) => b.createdAtMs - a.createdAtMs)[0];
+}
+
 export function readText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -106,6 +133,23 @@ export function readText(content: unknown): string {
     .filter((item) => item && item.type === "text" && typeof item.text === "string")
     .map((item) => item.text as string)
     .join("\n");
+}
+
+function getSessionFolderName(cwd: string): string {
+  const translatedCwd = cwd.replace(/^[\\/]+/, "").replace(/[\\/]+/g, "-");
+  return `--${translatedCwd}--`;
+}
+
+function snapshotSessionFile(filePath: string): SessionFileSnapshot | undefined {
+  try {
+    const stat = fs.statSync(filePath);
+    return {
+      filePath,
+      createdAtMs: stat.birthtimeMs || stat.ctimeMs || stat.mtimeMs,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function getSessionFiles(): string[] {

@@ -30,6 +30,26 @@ export function renderHome(nonce: string): string {
     padding: 14px 12px 10px;
     border-bottom: 1px solid var(--vscode-widget-border, transparent);
   }
+  .header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .new-session-button {
+    flex: 0 0 auto;
+    padding: 4px 8px;
+    color: var(--vscode-button-foreground);
+    background: var(--vscode-button-background);
+    border: 0;
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+  }
+  .new-session-button:hover {
+    background: var(--vscode-button-hoverBackground);
+  }
   .eyebrow {
     color: var(--vscode-descriptionForeground);
     font-size: 10px;
@@ -125,7 +145,10 @@ export function renderHome(nonce: string): string {
   <main class="home">
     <section class="header">
       <div class="eyebrow">Home</div>
-      <h1>Recent Pi Sessions</h1>
+      <div class="header-row">
+        <h1>Recent Pi Sessions</h1>
+        <button type="button" class="new-session-button" id="new-session-button">New</button>
+      </div>
     </section>
     <section class="list">
       ${renderGroups(groups, sessions.length)}
@@ -133,6 +156,9 @@ export function renderHome(nonce: string): string {
   </main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    document.getElementById('new-session-button').addEventListener('click', () => {
+      vscode.postMessage({ command: 'newSession' });
+    });
     document.querySelectorAll('[data-open-session]').forEach((session) => {
       session.addEventListener('click', () => {
         vscode.postMessage({

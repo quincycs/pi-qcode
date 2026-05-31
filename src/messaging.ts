@@ -3,7 +3,11 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { isSessionFile } from "./sessionFiles";
+import {
+  getNewestSessionFileForCwd,
+  isSessionFile,
+  type SessionFileSnapshot,
+} from "./sessionFiles";
 
 interface MessageSession {
   guid: string;
@@ -19,16 +23,24 @@ interface MsgMessage {
 
 export type MessageSessionMap = Map<string, MessageSession>;
 
-export function sendSessionMessage(
+export interface SendSessionMessageResult {
+  sessionFilePath?: string;
+}
+
+export async function sendSessionMessage(
   messageSessions: MessageSessionMap,
   filePath: string,
   text: string,
-): void {
-  if (!text) return;
+): Promise<SendSessionMessageResult> {
+  if (!text) return {};
+
+  if (!filePath) {
+    return startNewSessionMessage(messageSessions, text);
+  }
 
   if (!isSessionFile(filePath)) {
     vscode.window.showErrorMessage("Unable to send message: invalid session file.");
-    return;
+    return {};
   }
 
   const resolvedFilePath = path.resolve(filePath);
@@ -40,7 +52,7 @@ export function sendSessionMessage(
       text,
       asUser: true,
     });
-    return;
+    return {};
   }
 
   const guid = crypto.randomUUID();
@@ -49,6 +61,56 @@ export function sendSessionMessage(
 
   terminal.show();
   terminal.sendText(buildSessionMessageCommand(resolvedFilePath, guid, text));
+  return {};
+}
+
+async function startNewSessionMessage(
+  messageSessions: MessageSessionMap,
+  text: string,
+): Promise<SendSessionMessageResult> {
+  const cwd = getWorkspaceCwd();
+  if (!cwd) {
+    vscode.window.showErrorMessage("Unable to start session: no workspace folder is open.");
+    return {};
+  }
+
+  const before = getNewestSessionFileForCwd(cwd);
+  const guid = crypto.randomUUID();
+  const terminal = createSessionTerminal();
+
+  terminal.show();
+  terminal.sendText(buildNewSessionMessageCommand(guid, text));
+
+  const sessionFilePath = await waitForNewSessionFile(cwd, before);
+  if (!sessionFilePath) {
+    vscode.window.showErrorMessage("Unable to find the new Pi session file.");
+    return {};
+  }
+
+  messageSessions.set(path.resolve(sessionFilePath), { guid, terminal });
+  return { sessionFilePath };
+}
+
+async function waitForNewSessionFile(
+  cwd: string,
+  before: SessionFileSnapshot | undefined,
+): Promise<string | undefined> {
+  const deadline = Date.now() + 3000;
+
+  while (Date.now() <= deadline) {
+    const newest = getNewestSessionFileForCwd(cwd);
+    if (newest && (!before || newest.filePath !== before.filePath)) {
+      return newest.filePath;
+    }
+
+    await delay(200);
+  }
+
+  return undefined;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function sendSocketMessage(target: string, message: MsgMessage): Promise<string> {
@@ -93,18 +155,23 @@ function getWorkspaceCwd(): string | undefined {
 }
 
 function buildSessionMessageCommand(sessionFilePath: string, guid: string, message: string): string {
-  const encodedMessage = message
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .replace(/\n/g, "\\n");
-
   return [
     "pi",
     "--session",
     shellEscape(sessionFilePath),
     shellEscape(`/msg-on ${guid}`),
-    shellEscape(encodedMessage),
+    shellEscape(encodeMessageArgument(message)),
   ].join(" ");
+}
+
+function buildNewSessionMessageCommand(guid: string, message: string): string {
+  return ["pi", shellEscape(`/msg-on ${guid}`), shellEscape(encodeMessageArgument(message))].join(
+    " ",
+  );
+}
+
+function encodeMessageArgument(message: string): string {
+  return message.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n/g, "\\n");
 }
 
 function shellEscape(value: string): string {

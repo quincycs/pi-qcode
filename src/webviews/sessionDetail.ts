@@ -1,7 +1,12 @@
 import type { SessionDetail, SessionMessage } from "../sessionFiles";
 import { escapeHtml } from "../utils";
 
-export function renderSessionDetail(filePath: string, nonce: string, session: SessionDetail): string {
+export function renderSessionDetail(
+  filePath: string,
+  nonce: string,
+  session: SessionDetail,
+  options: { autoFocus?: boolean } = {},
+): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -138,7 +143,7 @@ export function renderSessionDetail(filePath: string, nonce: string, session: Se
   <main class="detail">
     <header class="header">
       <button type="button" class="home-button" id="home-button">Home</button>
-      <div class="title">${escapeHtml(session.title)}</div>
+      <div class="title" id="session-title">${escapeHtml(session.title)}</div>
     </header>
     <section class="body">
       ${renderSessionDetailBody(session)}
@@ -152,6 +157,7 @@ export function renderSessionDetail(filePath: string, nonce: string, session: Se
     const vscode = acquireVsCodeApi();
     const form = document.getElementById('message-form');
     const input = document.getElementById('message-input');
+    const title = document.getElementById('session-title');
     const messages = document.getElementById('messages');
     const resizeInput = () => {
       input.style.height = 'auto';
@@ -161,6 +167,13 @@ export function renderSessionDetail(filePath: string, nonce: string, session: Se
     const scrollLastMessageTop = () => {
       const lastMessage = messages && messages.querySelector('.session-message:last-child');
       if (lastMessage) lastMessage.scrollIntoView({ block: 'start' });
+    };
+    const renderEmptyMessages = () => {
+      if (!messages) return;
+      const empty = document.createElement('div');
+      empty.className = 'empty-messages';
+      empty.textContent = 'No messages found in this session.';
+      messages.append(empty);
     };
     const appendMessage = (message) => {
       if (!messages) return;
@@ -182,16 +195,38 @@ export function renderSessionDetail(filePath: string, nonce: string, session: Se
       article.append(role, text);
       messages.append(article);
     };
+    const replaceMessages = (newMessages) => {
+      if (!messages) return;
+      messages.replaceChildren();
+      if (!newMessages.length) {
+        renderEmptyMessages();
+        return;
+      }
+      newMessages.forEach(appendMessage);
+    };
 
     document.getElementById('home-button').addEventListener('click', () => {
       vscode.postMessage({ command: 'home' });
     });
     input.addEventListener('input', resizeInput);
     resizeInput();
+    if (${options.autoFocus ? "true" : "false"}) {
+      requestAnimationFrame(() => input.focus());
+    }
     requestAnimationFrame(scrollLastMessageTop);
     window.addEventListener('message', (event) => {
       const data = event.data;
-      if (!data || data.command !== 'appendMessages' || !Array.isArray(data.messages)) {
+      if (!data) return;
+
+      if (data.command === 'sessionFileReady') {
+        form.dataset.filePath = data.filePath || '';
+        if (title) title.textContent = data.title || 'Session Detail';
+        replaceMessages(Array.isArray(data.messages) ? data.messages : []);
+        requestAnimationFrame(scrollLastMessageTop);
+        return;
+      }
+
+      if (data.command !== 'appendMessages' || !Array.isArray(data.messages)) {
         return;
       }
 
@@ -219,6 +254,10 @@ export function renderSessionDetail(filePath: string, nonce: string, session: Se
 function renderSessionDetailBody(session: SessionDetail): string {
   if (session.error) {
     return `<div class="error">${escapeHtml(session.error)}</div>`;
+  }
+
+  if (!session.filePath) {
+    return '<div class="messages" id="messages"></div>';
   }
 
   const messages = session.messages.length
