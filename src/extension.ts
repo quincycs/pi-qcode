@@ -29,6 +29,7 @@ type WebviewMessage =
   | { command: "home" }
   | { command: "settings" }
   | { command: "saveSettings"; settings?: unknown }
+  | { command: "confirmDeleteHashOption"; index?: number; label?: string }
   | { command: "sendMessage"; filePath?: string; text?: string }
   | { command: "searchFiles"; requestId?: number; query?: string }
   | { command: "searchHashOptions"; requestId?: number; query?: string };
@@ -186,6 +187,23 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         };
 
+        const handleConfirmDeleteHashOption = async (
+          message: Extract<WebviewMessage, { command: "confirmDeleteHashOption" }>,
+        ) => {
+          const label = String(message.label || "this option");
+          const confirmed = await vscode.window.showWarningMessage(
+            `Delete ${label}?`,
+            { modal: true },
+            "Delete",
+          );
+          if (confirmed !== "Delete") return;
+
+          await view.webview.postMessage({
+            command: "deleteHashOptionConfirmed",
+            index: Number(message.index),
+          });
+        };
+
         const deliverPendingInput = () => {
           if (
             !pendingInputText ||
@@ -250,6 +268,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (message.command === "saveSettings") {
             void handleSaveSettings(message);
+          }
+
+          if (message.command === "confirmDeleteHashOption") {
+            void handleConfirmDeleteHashOption(message);
           }
         });
 
