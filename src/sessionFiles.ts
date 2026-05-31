@@ -399,7 +399,7 @@ function updateSessionMessageState(state: SessionMessageState, line: string): bo
 
   if (!state.lastRenderedWasUser) return contextChanged;
 
-  incrementThinkingCount(state.thinkingCounts, getEntryType(entry));
+  incrementThinkingCounts(state.thinkingCounts, getThinkingEntryCounts(entry));
   upsertThinkingMessage(state.visibleMessages, state.thinkingCounts);
   return true;
 }
@@ -541,6 +541,33 @@ function readRenderableSessionMessage(entry: Record<string, unknown>): SessionMe
   };
 }
 
+function getThinkingEntryCounts(entry: Record<string, unknown>): Record<string, number> {
+  const toolCallCounts = readAssistantToolCallCounts(entry);
+  if (Object.keys(toolCallCounts).length) return toolCallCounts;
+
+  return { [getEntryType(entry)]: 1 };
+}
+
+function readAssistantToolCallCounts(entry: Record<string, unknown>): Record<string, number> {
+  if (entry.type !== "message") return {};
+
+  const message = readRecord(entry.message);
+  if (message?.role !== "assistant" || !Array.isArray(message.content)) return {};
+
+  const counts: Record<string, number> = {};
+  for (const contentItem of message.content) {
+    const item = readRecord(contentItem);
+    if (item?.type !== "toolCall") continue;
+
+    const toolName = typeof item.name === "string" && item.name.trim()
+      ? item.name.trim()
+      : "toolCall";
+    counts[toolName] = (counts[toolName] || 0) + 1;
+  }
+
+  return counts;
+}
+
 function getEntryType(entry: Record<string, unknown>): string {
   const entryType = typeof entry.type === "string" ? entry.type : "unknown";
   if (entryType !== "message") return entryType;
@@ -552,8 +579,13 @@ function getEntryType(entry: Record<string, unknown>): string {
   return typeof role === "string" ? `message.${role}` : "message";
 }
 
-function incrementThinkingCount(counts: Record<string, number>, entryType: string): void {
-  counts[entryType] = (counts[entryType] || 0) + 1;
+function incrementThinkingCounts(
+  counts: Record<string, number>,
+  incrementCounts: Record<string, number>,
+): void {
+  for (const [entryType, count] of Object.entries(incrementCounts)) {
+    counts[entryType] = (counts[entryType] || 0) + count;
+  }
 }
 
 function upsertThinkingMessage(
