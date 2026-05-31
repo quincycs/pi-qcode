@@ -1,10 +1,9 @@
-import * as os from "node:os";
 import type { RecentSession } from "../sessionFiles";
 import { getRecentSessions } from "../sessionFiles";
 import { escapeHtml } from "../utils";
 
-export function renderHome(nonce: string): string {
-  const sessions = getRecentSessions();
+export function renderHome(nonce: string, workspaceCwd?: string): string {
+  const sessions = getRecentSessions(workspaceCwd);
   const groups = groupSessions(sessions);
 
   return `<!doctype html>
@@ -98,14 +97,6 @@ export function renderHome(nonce: string): string {
     gap: 7px;
     min-width: 0;
   }
-  .dot {
-    width: 7px;
-    height: 7px;
-    flex: 0 0 auto;
-    border-radius: 50%;
-    background: var(--vscode-charts-blue, #3794ff);
-    opacity: 0.9;
-  }
   .title {
     min-width: 0;
     overflow: hidden;
@@ -116,13 +107,12 @@ export function renderHome(nonce: string): string {
   }
   .meta {
     margin-top: 3px;
-    padding-left: 14px;
     color: var(--vscode-descriptionForeground);
     font-size: 10px;
     line-height: 1.35;
   }
   .preview {
-    margin: 6px 0 0 14px;
+    margin: 6px 0 0;
     padding: 5px 7px;
     color: var(--vscode-descriptionForeground);
     background: var(--vscode-input-background);
@@ -199,19 +189,16 @@ function renderGroups(groups: Record<string, RecentSession[]>, total: number): s
 
 function renderSession(session: RecentSession): string {
   const meta = [
-    session.model !== "unknown" ? session.model : "",
-    `${session.messageCount} msg${session.messageCount === 1 ? "" : "s"}`,
     timeSince(session.lastActiveAt),
-    session.totalTokens > 0 ? `${Math.round(session.totalTokens / 1000)}k tok` : "",
-    session.cwd ? shortPath(session.cwd) : "",
+    `${session.messageCount} msg${session.messageCount === 1 ? "" : "s"}`,
+    session.model !== "unknown" ? session.model : "",
   ]
     .filter(Boolean)
-    .join(" · ");
+    .join(" - ");
 
   return `
     <button type="button" class="session" title="${escapeHtml(session.fileName)}" data-open-session data-file-path="${escapeHtml(session.filePath)}">
       <div class="title-row">
-        <span class="dot"></span>
         <div class="title">${escapeHtml(session.title)}</div>
       </div>
       <div class="meta">${escapeHtml(meta)}</div>
@@ -240,7 +227,3 @@ function timeSince(date: Date): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function shortPath(value: string): string {
-  const home = os.homedir();
-  return value.startsWith(home) ? `~${value.slice(home.length)}` : value;
-}

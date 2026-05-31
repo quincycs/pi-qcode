@@ -35,7 +35,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const showHome = () => {
           stopSessionWatcher();
           currentRoute = { name: "home" };
-          view.webview.html = renderHome(getNonce());
+          view.webview.html = renderHome(getNonce(), getWorkspaceCwd());
         };
 
         const showSessionDetail = (filePath: string) => {
@@ -118,6 +118,11 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     }),
   );
+}
+
+function getWorkspaceCwd(): string | undefined {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  return workspaceFolder ? workspaceFolder.uri.fsPath : undefined;
 }
 
 export function deactivate(): void {}

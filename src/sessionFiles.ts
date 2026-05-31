@@ -35,10 +35,11 @@ export interface SessionFileSnapshot {
   createdAtMs: number;
 }
 
-export function getRecentSessions(): RecentSession[] {
+export function getRecentSessions(workspaceCwd?: string): RecentSession[] {
   return getSessionFiles()
     .map(parseSessionFile)
     .filter((session): session is RecentSession => Boolean(session))
+    .filter((session) => !workspaceCwd || isSameCwd(session.cwd, workspaceCwd))
     .sort((a, b) => b.lastActiveAt.getTime() - a.lastActiveAt.getTime())
     .slice(0, 50);
 }
@@ -138,6 +139,11 @@ export function readText(content: unknown): string {
 function getSessionFolderName(cwd: string): string {
   const translatedCwd = cwd.replace(/^[\\/]+/, "").replace(/[\\/]+/g, "-");
   return `--${translatedCwd}--`;
+}
+
+function isSameCwd(sessionCwd: string, workspaceCwd: string): boolean {
+  if (!sessionCwd) return false;
+  return path.resolve(sessionCwd) === path.resolve(workspaceCwd);
 }
 
 function snapshotSessionFile(filePath: string): SessionFileSnapshot | undefined {
