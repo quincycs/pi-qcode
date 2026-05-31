@@ -1,5 +1,6 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const vscode = require("vscode");
@@ -368,7 +369,6 @@ function renderSessionDetail(filePath, nonce, session) {
     const vscode = acquireVsCodeApi();
     const form = document.getElementById('message-form');
     const input = document.getElementById('message-input');
-    const submitButton = document.getElementById('submit-button');
     const messages = document.getElementById('messages');
     const resizeInput = () => {
       input.style.height = 'auto';
@@ -424,7 +424,9 @@ function renderSessionDetail(filePath, nonce, session) {
         filePath: form.dataset.filePath || '',
         text: input.value,
       });
-      submitButton.disabled = true;
+      input.value = '';
+      resizeInput();
+      input.focus();
     });
   </script>
 </body>
@@ -550,7 +552,15 @@ function sendSessionMessage(messageSessions, filePath, text) {
   }
 
   const resolvedFilePath = path.resolve(filePath);
-  if (messageSessions.has(resolvedFilePath)) return;
+  const existingMessageSession = messageSessions.get(resolvedFilePath);
+  if (existingMessageSession) {
+    sendSocketMessage(existingMessageSession.guid, {
+      type: "text",
+      from: "qcode",
+      text,
+    });
+    return;
+  }
 
   const guid = crypto.randomUUID();
   const terminal = createSessionTerminal();
@@ -558,6 +568,34 @@ function sendSessionMessage(messageSessions, filePath, text) {
 
   terminal.show();
   terminal.sendText(buildSessionMessageCommand(resolvedFilePath, guid, text));
+}
+
+function sendSocketMessage(target, message) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection(getMsgSocketPath(target));
+    let reply = "";
+
+    socket.setTimeout(3000, () => {
+      socket.destroy();
+      resolve(reply);
+    });
+
+    socket.on("connect", () => {
+      socket.write(`${JSON.stringify(message)}\n`);
+      socket.end();
+    });
+
+    socket.on("data", (chunk) => {
+      reply += chunk.toString();
+    });
+
+    socket.on("end", () => resolve(reply));
+    socket.on("error", () => resolve(""));
+  });
+}
+
+function getMsgSocketPath(name) {
+  return path.join(os.homedir(), ".pi", "msg", `${name}.sock`);
 }
 
 function createSessionTerminal() {
