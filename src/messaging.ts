@@ -14,6 +14,7 @@ interface MsgMessage {
   type: "text";
   from: string;
   text: string;
+  asUser?: boolean;
 }
 
 export type MessageSessionMap = Map<string, MessageSession>;
@@ -37,6 +38,7 @@ export function sendSessionMessage(
       type: "text",
       from: "qcode",
       text,
+      asUser: true,
     });
     return;
   }
