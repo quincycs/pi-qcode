@@ -1,24 +1,37 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { searchFileSuggestions } from "./fileSuggestions";
+import { searchHashAutocompleteSuggestions } from "./hashAutocomplete";
 import { sendSessionMessage, type MessageSessionMap } from "./messaging";
+import {
+  getSettingsFilePath,
+  readQcodeSettings,
+  writeQcodeSettings,
+} from "./qcodeSettings";
 import type { SessionDetail } from "./sessionFiles";
 import { readSessionDetail, watchSessionDetail } from "./sessionFiles";
 import { getNonce } from "./utils";
 import { renderHome } from "./webviews/home";
 import { renderSessionDetail } from "./webviews/sessionDetail";
+import { renderSettings } from "./webviews/settings";
 
 const viewType = "qcode.home";
 
-type Route = { name: "home" } | { name: "sessionDetail"; filePath?: string };
+type Route =
+  | { name: "home" }
+  | { name: "sessionDetail"; filePath?: string }
+  | { name: "settings" };
 
 type WebviewMessage =
   | { command: "openSession"; filePath?: string }
   | { command: "newSession" }
   | { command: "ready" }
   | { command: "home" }
+  | { command: "settings" }
+  | { command: "saveSettings"; settings?: unknown }
   | { command: "sendMessage"; filePath?: string; text?: string }
-  | { command: "searchFiles"; requestId?: number; query?: string };
+  | { command: "searchFiles"; requestId?: number; query?: string }
+  | { command: "searchHashOptions"; requestId?: number; query?: string };
 
 export function activate(context: vscode.ExtensionContext): void {
   let addToActiveQcodeInput: (() => void) | undefined;
@@ -68,6 +81,17 @@ export function activate(context: vscode.ExtensionContext): void {
           detailWebviewReady = false;
           currentRoute = { name: "home" };
           view.webview.html = renderHome(getNonce(), getWorkspaceCwd());
+        };
+
+        const showSettings = () => {
+          stopSessionWatcher();
+          detailWebviewReady = false;
+          currentRoute = { name: "settings" };
+          view.webview.html = renderSettings(
+            getNonce(),
+            readQcodeSettings(),
+            getSettingsFilePath(),
+          );
         };
 
         const showSessionDetail = (filePath: string) => {
@@ -134,6 +158,34 @@ export function activate(context: vscode.ExtensionContext): void {
           });
         };
 
+        const handleSearchHashOptions = async (
+          message: Extract<WebviewMessage, { command: "searchHashOptions" }>,
+        ) => {
+          const requestId = Number(message.requestId || 0);
+          const items = searchHashAutocompleteSuggestions(
+            String(message.query || ""),
+          );
+          await view.webview.postMessage({
+            command: "hashSuggestions",
+            requestId,
+            items,
+          });
+        };
+
+        const handleSaveSettings = async (
+          message: Extract<WebviewMessage, { command: "saveSettings" }>,
+        ) => {
+          try {
+            const settings = await writeQcodeSettings(message.settings);
+            await view.webview.postMessage({ command: "settingsSaved", settings });
+          } catch (error) {
+            await view.webview.postMessage({
+              command: "settingsSaveError",
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        };
+
         const deliverPendingInput = () => {
           if (
             !pendingInputText ||
@@ -180,12 +232,24 @@ export function activate(context: vscode.ExtensionContext): void {
             showHome();
           }
 
+          if (message.command === "settings") {
+            showSettings();
+          }
+
           if (message.command === "sendMessage") {
             void handleSendMessage(message);
           }
 
           if (message.command === "searchFiles") {
             void handleSearchFiles(message);
+          }
+
+          if (message.command === "searchHashOptions") {
+            void handleSearchHashOptions(message);
+          }
+
+          if (message.command === "saveSettings") {
+            void handleSaveSettings(message);
           }
         });
 
@@ -194,6 +258,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (currentRoute.name === "sessionDetail") {
             if (currentRoute.filePath) showSessionDetail(currentRoute.filePath);
+          } else if (currentRoute.name === "settings") {
+            showSettings();
           } else {
             showHome();
           }

@@ -221,8 +221,8 @@ export function renderSessionDetail(
       ${renderSessionDetailBody(session)}
     </section>
     <form class="footer" id="message-form" data-file-path="${escapeHtml(filePath)}">
-      <div class="typeahead" id="file-typeahead" role="listbox" aria-label="File suggestions" hidden>
-        <div class="typeahead-list" id="file-typeahead-list"></div>
+      <div class="typeahead" id="typeahead" role="listbox" aria-label="Autocomplete suggestions" hidden>
+        <div class="typeahead-list" id="typeahead-list"></div>
       </div>
       <textarea class="message-input" id="message-input" rows="1" aria-label="Message" placeholder="Message"></textarea>
       <button class="submit-button" id="submit-button" type="submit" aria-label="Submit">➤</button>
@@ -234,10 +234,10 @@ export function renderSessionDetail(
     const input = document.getElementById('message-input');
     const title = document.getElementById('session-title');
     const messages = document.getElementById('messages');
-    const typeahead = document.getElementById('file-typeahead');
-    const typeaheadList = document.getElementById('file-typeahead-list');
-    let mentionState = null;
-    let fileSuggestions = [];
+    const typeahead = document.getElementById('typeahead');
+    const typeaheadList = document.getElementById('typeahead-list');
+    let completionState = null;
+    let completionSuggestions = [];
     let selectedSuggestionIndex = 0;
     let searchRequestId = 0;
     let searchTimer = undefined;
@@ -301,8 +301,8 @@ export function renderSessionDetail(
       newMessages.forEach(appendMessage);
     };
     const hideTypeahead = () => {
-      mentionState = null;
-      fileSuggestions = [];
+      completionState = null;
+      completionSuggestions = [];
       selectedSuggestionIndex = 0;
       searchRequestId += 1;
       typeahead.hidden = true;
@@ -319,12 +319,15 @@ export function renderSessionDetail(
     };
     const renderTypeahead = () => {
       typeaheadList.replaceChildren();
-      if (!fileSuggestions.length) {
-        showTypeaheadMessage('No matching files');
+      if (!completionSuggestions.length) {
+        const message = completionState && completionState.kind === 'hash'
+          ? 'No matching # options'
+          : 'No matching files';
+        showTypeaheadMessage(message);
         return;
       }
 
-      fileSuggestions.forEach((item, index) => {
+      completionSuggestions.forEach((item, index) => {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'typeahead-item' + (index === selectedSuggestionIndex ? ' is-selected' : '');
@@ -334,11 +337,11 @@ export function renderSessionDetail(
 
         const label = document.createElement('span');
         label.className = 'typeahead-label';
-        label.textContent = item.label || item.path || '';
+        label.textContent = item.label || item.command || item.path || '';
 
         const description = document.createElement('span');
         description.className = 'typeahead-description';
-        description.textContent = item.description || item.path || '';
+        description.textContent = item.description || item.value || item.path || '';
 
         button.append(label, description);
         button.addEventListener('mouseenter', () => {
@@ -346,61 +349,80 @@ export function renderSessionDetail(
         });
         button.addEventListener('mousedown', (event) => {
           event.preventDefault();
-          insertSelectedFileSuggestion(index);
+          insertSelectedCompletion(index);
         });
         typeaheadList.append(button);
       });
       typeahead.hidden = false;
     };
-    const getMentionState = () => {
+    const getCompletionState = () => {
       const cursorPosition = input.selectionStart ?? input.value.length;
       if ((input.selectionEnd ?? cursorPosition) !== cursorPosition) return null;
 
       const beforeCursor = input.value.slice(0, cursorPosition);
       const atIndex = beforeCursor.lastIndexOf('@');
-      if (atIndex === -1) return null;
+      const hashIndex = beforeCursor.lastIndexOf('#');
+      const triggerIndex = Math.max(atIndex, hashIndex);
+      if (triggerIndex === -1) return null;
 
-      const query = beforeCursor.slice(atIndex + 1);
+      const trigger = beforeCursor[triggerIndex];
+      const query = beforeCursor.slice(triggerIndex + 1);
       if (/\s/.test(query)) return null;
-      if (query.toLowerCase().startsWith('http')) return null;
+      if (trigger === '@' && query.toLowerCase().startsWith('http')) return null;
 
-      return { atIndex, cursorPosition, query };
+      return {
+        kind: trigger === '#' ? 'hash' : 'file',
+        triggerIndex,
+        cursorPosition,
+        query,
+      };
     };
     const updateTypeahead = () => {
-      const state = getMentionState();
+      const state = getCompletionState();
       if (!state) {
         hideTypeahead();
         return;
       }
 
-      mentionState = state;
-      showTypeaheadMessage('Searching files...');
+      completionState = state;
+      showTypeaheadMessage(state.kind === 'hash' ? 'Searching # options...' : 'Searching files...');
       if (searchTimer) window.clearTimeout(searchTimer);
       const requestId = ++searchRequestId;
       searchTimer = window.setTimeout(() => {
         vscode.postMessage({
-          command: 'searchFiles',
+          command: state.kind === 'hash' ? 'searchHashOptions' : 'searchFiles',
           requestId,
           query: state.query,
         });
       }, 100);
     };
     const formatMentionPath = (filePath) => /\s/.test(filePath) ? '"' + filePath + '"' : filePath;
-    const insertSelectedFileSuggestion = (index = selectedSuggestionIndex) => {
-      const item = fileSuggestions[index];
-      if (!item || !item.path) return;
+    const insertSelectedCompletion = (index = selectedSuggestionIndex) => {
+      const item = completionSuggestions[index];
+      if (!item) return;
 
-      const state = mentionState || getMentionState();
+      const state = completionState || getCompletionState();
       if (!state) return;
 
-      const formattedPath = formatMentionPath(item.path);
-      const beforeMention = input.value.slice(0, state.atIndex + 1);
-      const afterMention = input.value.slice(state.cursorPosition);
-      const suffix = afterMention.startsWith(' ') ? afterMention : ' ' + afterMention;
-      input.value = beforeMention + formattedPath + suffix;
+      if (state.kind === 'hash') {
+        if (typeof item.value !== 'string') return;
+        const beforeTrigger = input.value.slice(0, state.triggerIndex);
+        const afterTrigger = input.value.slice(state.cursorPosition);
+        const suffix = afterTrigger.startsWith(' ') ? afterTrigger : ' ' + afterTrigger;
+        input.value = beforeTrigger + item.value + suffix;
+        const nextCursorPosition = beforeTrigger.length + item.value.length + 1;
+        input.setSelectionRange(nextCursorPosition, nextCursorPosition);
+      } else {
+        if (!item.path) return;
+        const formattedPath = formatMentionPath(item.path);
+        const beforeMention = input.value.slice(0, state.triggerIndex + 1);
+        const afterMention = input.value.slice(state.cursorPosition);
+        const suffix = afterMention.startsWith(' ') ? afterMention : ' ' + afterMention;
+        input.value = beforeMention + formattedPath + suffix;
+        const nextCursorPosition = beforeMention.length + formattedPath.length + 1;
+        input.setSelectionRange(nextCursorPosition, nextCursorPosition);
+      }
 
-      const nextCursorPosition = beforeMention.length + formattedPath.length + 1;
-      input.setSelectionRange(nextCursorPosition, nextCursorPosition);
       resizeInput();
       hideTypeahead();
       input.focus();
@@ -436,25 +458,25 @@ export function renderSessionDetail(
         return;
       }
 
-      if (!fileSuggestions.length) return;
+      if (!completionSuggestions.length) return;
 
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        selectedSuggestionIndex = (selectedSuggestionIndex + 1) % fileSuggestions.length;
+        selectedSuggestionIndex = (selectedSuggestionIndex + 1) % completionSuggestions.length;
         renderTypeahead();
         return;
       }
 
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        selectedSuggestionIndex = (selectedSuggestionIndex - 1 + fileSuggestions.length) % fileSuggestions.length;
+        selectedSuggestionIndex = (selectedSuggestionIndex - 1 + completionSuggestions.length) % completionSuggestions.length;
         renderTypeahead();
         return;
       }
 
       if (event.key === 'Tab' || event.key === 'Enter') {
         event.preventDefault();
-        insertSelectedFileSuggestion();
+        insertSelectedCompletion();
       }
     });
     resizeInput();
@@ -485,9 +507,9 @@ export function renderSessionDetail(
         return;
       }
 
-      if (data.command === 'fileSuggestions') {
+      if (data.command === 'fileSuggestions' || data.command === 'hashSuggestions') {
         if (data.requestId !== searchRequestId) return;
-        fileSuggestions = Array.isArray(data.items) ? data.items : [];
+        completionSuggestions = Array.isArray(data.items) ? data.items : [];
         selectedSuggestionIndex = 0;
         renderTypeahead();
         return;

@@ -35,8 +35,13 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
     justify-content: space-between;
     gap: 8px;
   }
-  .new-session-button {
+  .header-actions {
+    display: flex;
     flex: 0 0 auto;
+    gap: 6px;
+  }
+  .new-session-button,
+  .settings-button {
     padding: 4px 8px;
     color: var(--vscode-button-foreground);
     background: var(--vscode-button-background);
@@ -46,7 +51,8 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
     font: inherit;
     font-size: 11px;
   }
-  .new-session-button:hover {
+  .new-session-button:hover,
+  .settings-button:hover {
     background: var(--vscode-button-hoverBackground);
   }
   .eyebrow {
@@ -137,7 +143,10 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
       <div class="eyebrow">Home</div>
       <div class="header-row">
         <h1>Recent Pi Sessions</h1>
-        <button type="button" class="new-session-button" id="new-session-button">New</button>
+        <div class="header-actions">
+          <button type="button" class="settings-button" id="settings-button">Settings</button>
+          <button type="button" class="new-session-button" id="new-session-button">New</button>
+        </div>
       </div>
     </section>
     <section class="list">
@@ -148,6 +157,9 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
     const vscode = acquireVsCodeApi();
     document.getElementById('new-session-button').addEventListener('click', () => {
       vscode.postMessage({ command: 'newSession' });
+    });
+    document.getElementById('settings-button').addEventListener('click', () => {
+      vscode.postMessage({ command: 'settings' });
     });
     document.querySelectorAll('[data-open-session]').forEach((session) => {
       session.addEventListener('click', () => {
