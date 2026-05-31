@@ -1,0 +1,5 @@
+similiar to plan19.md , however i'd like certain read tool messages to be counted separately. anytime a 'SKILL.md' file is read, i'd like the parent folder to be parsed out. That folder name is the skill name, and i'd like the thinking message to show '/skill:{skillName}\n' for each skill read instead of counting that as a read tool.
+
+For example, below is a read tool call, and the skill is "code-review"
+
+{"type":"message","id":"ecd2568b","parentId":"acacad56","timestamp":"2026-05-31T15:12:18.635Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"call_Oarcg652i9lsYPoHFbEQPLVk|fc_0c95ee2cd7491e86016a1c4fd20c588195a9ff9a48f6e2b3a2","name":"read","arguments":{"path":"/Users/xxxx/.cline/skills/code-review/SKILL.md","limit":400}}],"api":"openai-codex-responses","provider":"openai-codex","model":"gpt-5.5","usage":{"input":555,"output":35,"cacheRead":41472,"cacheWrite":0,"totalTokens":42062,"cost":{"input":0.002775,"output":0.00105,"cacheRead":0.020735999999999997,"cacheWrite":0,"total":0.024561}},"stopReason":"toolUse","timestamp":1780240336828,"responseId":"resp_0c95ee2cd7491e86016a1c4fd0fa908195b53a25edebb4c6a0"}}

@@ -562,10 +562,43 @@ function readAssistantToolCallCounts(entry: Record<string, unknown>): Record<str
     const toolName = typeof item.name === "string" && item.name.trim()
       ? item.name.trim()
       : "toolCall";
-    counts[toolName] = (counts[toolName] || 0) + 1;
+    const thinkingKey = getToolCallThinkingKey(toolName, item);
+    counts[thinkingKey] = (counts[thinkingKey] || 0) + 1;
   }
 
   return counts;
+}
+
+function getToolCallThinkingKey(toolName: string, item: Record<string, unknown>): string {
+  const skillName = readSkillNameFromToolCall(toolName, item);
+  return skillName ? `/skill:${skillName}` : toolName;
+}
+
+function readSkillNameFromToolCall(
+  toolName: string,
+  item: Record<string, unknown>,
+): string | undefined {
+  if (toolName !== "read" && !toolName.endsWith(".read")) return undefined;
+
+  const argumentsRecord = readToolCallArguments(item.arguments);
+  const filePath = argumentsRecord?.path;
+  if (typeof filePath !== "string") return undefined;
+
+  const match = filePath.match(/(?:^|[/\\])([^/\\]+)[/\\]SKILL\.md$/);
+  return match?.[1] || undefined;
+}
+
+function readToolCallArguments(value: unknown): Record<string, unknown> | undefined {
+  const record = readRecord(value);
+  if (record) return record;
+
+  if (typeof value !== "string") return undefined;
+
+  try {
+    return readRecord(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
 }
 
 function getEntryType(entry: Record<string, unknown>): string {
@@ -607,11 +640,20 @@ function formatThinkingEntryType(entryType: string): string {
   return entryType.startsWith("message.") ? entryType.slice("message.".length) : entryType;
 }
 
+function formatThinkingCount(entryType: string, count: number): string {
+  const formattedEntryType = formatThinkingEntryType(entryType);
+  if (formattedEntryType.startsWith("/skill:") && count === 1) {
+    return formattedEntryType;
+  }
+
+  return `${formattedEntryType}: ${count}`;
+}
+
 function createThinkingMessage(counts: Record<string, number>): SessionMessage | null {
   const entries = Object.entries(counts).filter(([, count]) => count > 0);
   const text = entries
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([entryType, count]) => `${formatThinkingEntryType(entryType)}: ${count}`)
+    .map(([entryType, count]) => formatThinkingCount(entryType, count))
     .join("\n");
 
   return {
