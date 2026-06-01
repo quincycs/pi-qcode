@@ -15,7 +15,7 @@ import {
 } from "./qcodeSettings";
 import type { SessionDetail } from "./sessionFiles";
 import { readSessionDetail, watchSessionDetail } from "./sessionFiles";
-import { getNonce } from "./utils";
+import { delay, getNonce } from "./utils";
 import { renderHome } from "./webviews/home";
 import { renderSessionDetail } from "./webviews/sessionDetail";
 import { renderSettings } from "./webviews/settings";
@@ -52,26 +52,35 @@ export function activate(context: vscode.ExtensionContext): void {
     pendingInputText = pendingInputText ? `${pendingInputText}\n${text}` : text;
   };
 
+  const addTextToQcodeInput = async (text: string) => {
+    if (!text) return;
+
+    queueInputText(text);
+
+    if (!addToActiveQcodeInput) {
+      await vscode.commands.executeCommand("qcode.home.focus");
+    }
+
+    if (!addToActiveQcodeInput) {
+      vscode.window.showInformationMessage(
+        "Open QCode to add selected text to its input.",
+      );
+      return;
+    }
+
+    addToActiveQcodeInput();
+  };
+
   context.subscriptions.push(
     vscode.commands.registerCommand("qcode.addToQcode", async () => {
-      const selectedText = getSelectedEditorText();
-      if (!selectedText) return;
-
-      queueInputText(selectedText);
-
-      if (!addToActiveQcodeInput) {
-        await vscode.commands.executeCommand("qcode.home.focus");
-      }
-
-      if (!addToActiveQcodeInput) {
-        vscode.window.showInformationMessage(
-          "Open QCode to add selected text to its input.",
-        );
-        return;
-      }
-
-      addToActiveQcodeInput();
+      await addTextToQcodeInput(getSelectedEditorText());
     }),
+    vscode.commands.registerCommand(
+      "qcode.addTerminalSelectionToQcode",
+      async () => {
+        await addTextToQcodeInput(await getSelectedTerminalText());
+      },
+    ),
     vscode.window.registerWebviewViewProvider(viewType, {
       resolveWebviewView(view) {
         let currentRoute: Route = { name: "home" };
@@ -397,6 +406,26 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     }),
   );
+}
+
+async function getSelectedTerminalText(): Promise<string> {
+  if (!vscode.window.activeTerminal) return "";
+
+  const previousClipboardText = await vscode.env.clipboard.readText();
+  const sentinelClipboardText = `qcode-terminal-selection-${Date.now()}-${Math.random()}`;
+
+  try {
+    await vscode.env.clipboard.writeText(sentinelClipboardText);
+    await vscode.commands.executeCommand("workbench.action.terminal.copySelection");
+    await delay(50);
+
+    const selectedText = await vscode.env.clipboard.readText();
+    if (!selectedText || selectedText === sentinelClipboardText) return "";
+
+    return `Terminal selection:\n\`\`\`terminal\n${trimTrailingLineEndings(selectedText)}\n\`\`\`\n`;
+  } finally {
+    await vscode.env.clipboard.writeText(previousClipboardText);
+  }
 }
 
 function getSelectedEditorText(): string {

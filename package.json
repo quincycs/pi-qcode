@@ -13,7 +13,8 @@
   ],
   "activationEvents": [
     "onView:qcode.home",
-    "onCommand:qcode.addToQcode"
+    "onCommand:qcode.addToQcode",
+    "onCommand:qcode.addTerminalSelectionToQcode"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -39,6 +40,10 @@
       {
         "command": "qcode.addToQcode",
         "title": "Add to QCode"
+      },
+      {
+        "command": "qcode.addTerminalSelectionToQcode",
+        "title": "Add to QCode"
       }
     ],
     "menus": {
@@ -47,6 +52,19 @@
           "command": "qcode.addToQcode",
           "when": "editorHasSelection",
           "group": "navigation"
+        }
+      ],
+      "terminal/context": [
+        {
+          "command": "qcode.addTerminalSelectionToQcode",
+          "when": "terminalTextSelected",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "qcode.addTerminalSelectionToQcode",
+          "when": "false"
         }
       ]
     },
