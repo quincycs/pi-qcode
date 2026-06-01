@@ -31,3 +31,11 @@ pi install git:github.com/m7l5/pi-msg
 npm install
 npm run package-install
 ```
+
+## Thanks & Shoutouts
+
+Inspiration for this project came from these inspiring projects:
+
+- [m7l5/pi-msg](https://github.com/m7l5/pi-msg)
+- [AcendWay/PiDE_Piper_VSCode_Extention](https://github.com/AcendWay/PiDE_Piper_VSCode_Extention)
+- [Cline/Cline](https://github.com/cline/cline)
