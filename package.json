@@ -86,7 +86,8 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc --project tsconfig.json",
     "watch": "tsc --watch --project tsconfig.json",
-    "package-install": "npm run compile && vsce package --allow-missing-repository --out pi-qcode-0.0.1.vsix && code --install-extension pi-qcode-0.0.1.vsix --force"
+    "package-install": "npm run compile && vsce package --allow-missing-repository --out pi-qcode-0.0.1.vsix && code --install-extension pi-qcode-0.0.1.vsix --force",
+    "package-uninstall": "code --uninstall-extension QuincyMitchell.pi-qcode"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

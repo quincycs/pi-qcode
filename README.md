@@ -25,11 +25,21 @@ Install a needed pi extension: `pi-msg` [more info](https://github.com/m7l5/pi-m
 pi install git:github.com/m7l5/pi-msg
 ```
 
-## Local development
+## Install from vscode marketplace
+
+[Visit Marketplace](https://marketplace.visualstudio.com/items?itemName=QuincyMitchell.pi-qcode)
+
+## Install from cloning this repo
 
 ```sh
 npm install
 npm run package-install
+```
+
+and if you don't like it,
+
+```sh
+npm run package-uninstall
 ```
 
 ## Thanks & Shoutouts
