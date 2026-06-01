@@ -427,7 +427,7 @@ ${messageRenderingScript}
 
       const trigger = beforeCursor[triggerIndex];
       const query = beforeCursor.slice(triggerIndex + 1);
-      if (/\s/.test(query)) return null;
+      if (/\\s/.test(query)) return null;
       if (trigger === '@' && query.toLowerCase().startsWith('http')) return null;
 
       return {
