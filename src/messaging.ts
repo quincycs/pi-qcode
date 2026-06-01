@@ -102,7 +102,7 @@ async function waitForNewSessionFile(
   cwd: string,
   before: SessionFileSnapshot | undefined,
 ): Promise<string | undefined> {
-  const deadline = Date.now() + 3000;
+  const deadline = Date.now() + 30000; // 30 seconds
 
   while (Date.now() <= deadline) {
     const newest = getNewestSessionFileForCwd(cwd);
@@ -212,7 +212,10 @@ function splitCliArgs(value: string): string[] {
       continue;
     }
 
-    if ((character === '"' || character === "'") && (!quote || quote === character)) {
+    if (
+      (character === '"' || character === "'") &&
+      (!quote || quote === character)
+    ) {
       quote = quote ? undefined : character;
       continue;
     }
