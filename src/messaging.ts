@@ -189,5 +189,12 @@ function encodeMessageArgument(message: string): string {
 
 function shellEscape(value: string): string {
   if (!value) return "''";
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+
+  // workaround for:
+  // - https://github.com/earendil-works/pi/issues/5267
+  let piArg = value;
+  if (value.startsWith("@")) {
+    piArg = " " + value;
+  }
+  return `'${piArg.replace(/'/g, `'\\''`)}'`;
 }
