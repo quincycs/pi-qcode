@@ -1,7 +1,7 @@
 {
   "name": "pi-qcode",
   "displayName": "pi-qcode",
-  "description": "A bare minimal VS Code extension home screen for recent Pi sessions.",
+  "description": "",
   "version": "0.0.1",
   "publisher": "QuincyMitchell",
   "license": "MIT",
