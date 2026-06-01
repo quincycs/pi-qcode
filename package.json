@@ -3,8 +3,8 @@
   "displayName": "pi-qcode",
   "description": "A bare minimal VS Code extension home screen for recent Pi sessions.",
   "version": "0.0.1",
-  "publisher": "local",
-  "license": "UNLICENSED",
+  "publisher": "QuincyMitchell",
+  "license": "MIT",
   "icon": "images/icon.png",
   "galleryBanner": {
     "color": "#FFFFFF",
