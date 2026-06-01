@@ -1,7 +1,11 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { searchFileSuggestions } from "./fileSuggestions";
-import { fileReferenceExists, openExternalUrl, openFileReference } from "./fileReferences";
+import {
+  fileReferenceExists,
+  openExternalUrl,
+  openFileReference,
+} from "./fileReferences";
 import { searchHashAutocompleteSuggestions } from "./hashAutocomplete";
 import { sendSessionMessage, type MessageSessionMap } from "./messaging";
 import {
@@ -165,15 +169,26 @@ export function activate(context: vscode.ExtensionContext): void {
         };
 
         const handleResolveFileReferences = async (
-          message: Extract<WebviewMessage, { command: "resolveFileReferences" }>,
+          message: Extract<
+            WebviewMessage,
+            { command: "resolveFileReferences" }
+          >,
         ) => {
           const values = Array.isArray(message.values)
-            ? [...new Set(message.values.map((value) => String(value || "")).filter(Boolean))]
+            ? [
+                ...new Set(
+                  message.values
+                    .map((value) => String(value || ""))
+                    .filter(Boolean),
+                ),
+              ]
             : [];
           const results: Record<string, boolean> = {};
-          await Promise.all(values.map(async (value) => {
-            results[value] = await fileReferenceExists(value);
-          }));
+          await Promise.all(
+            values.map(async (value) => {
+              results[value] = await fileReferenceExists(value);
+            }),
+          );
           await view.webview.postMessage({
             command: "fileReferenceResolution",
             requestId: Number(message.requestId || 0),
@@ -185,7 +200,9 @@ export function activate(context: vscode.ExtensionContext): void {
           message: Extract<WebviewMessage, { command: "searchFiles" }>,
         ) => {
           const requestId = Number(message.requestId || 0);
-          const items = await searchFileSuggestions(String(message.query || ""));
+          const items = await searchFileSuggestions(
+            String(message.query || ""),
+          );
           await view.webview.postMessage({
             command: "fileSuggestions",
             requestId,
@@ -212,7 +229,10 @@ export function activate(context: vscode.ExtensionContext): void {
         ) => {
           try {
             const settings = await writeQcodeSettings(message.settings);
-            await view.webview.postMessage({ command: "settingsSaved", settings });
+            await view.webview.postMessage({
+              command: "settingsSaved",
+              settings,
+            });
           } catch (error) {
             await view.webview.postMessage({
               command: "settingsSaveError",
@@ -222,7 +242,10 @@ export function activate(context: vscode.ExtensionContext): void {
         };
 
         const handleConfirmDeleteHashOption = async (
-          message: Extract<WebviewMessage, { command: "confirmDeleteHashOption" }>,
+          message: Extract<
+            WebviewMessage,
+            { command: "confirmDeleteHashOption" }
+          >,
         ) => {
           const label = String(message.label || "this option");
           const confirmed = await vscode.window.showWarningMessage(
@@ -248,9 +271,11 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           const text = pendingInputText;
-          view.webview.postMessage({ command: "addToInput", text }).then((sent) => {
-            if (sent && pendingInputText === text) pendingInputText = "";
-          });
+          view.webview
+            .postMessage({ command: "addToInput", text })
+            .then((sent) => {
+              if (sent && pendingInputText === text) pendingInputText = "";
+            });
         };
 
         addToActiveQcodeInput = () => {
@@ -349,12 +374,18 @@ function getSelectedEditorText(): string {
   if (!editor) return "";
 
   const selectedText = editor.selections
-    .map((selection) => editor.document.getText(selection))
+    .map((selection) =>
+      trimTrailingLineEndings(editor.document.getText(selection)),
+    )
     .filter(Boolean)
     .join("\n");
   if (!selectedText) return "";
 
-  return `@${getRelativeEditorPath(editor)}\n\`\`\`\n${selectedText}\n\`\`\``;
+  return `@${getRelativeEditorPath(editor)}\n\`\`\`\n${selectedText}\n\`\`\`\n`;
+}
+
+function trimTrailingLineEndings(value: string): string {
+  return value.replace(/(?:\r?\n|\r)+$/, "");
 }
 
 function getRelativeEditorPath(editor: vscode.TextEditor): string {
@@ -376,7 +407,11 @@ function getRelativeEditorPath(editor: vscode.TextEditor): string {
 
 function isPathInside(filePath: string, folderPath: string): boolean {
   const relativePath = path.relative(folderPath, filePath);
-  return Boolean(relativePath) && !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+  return (
+    Boolean(relativePath) &&
+    !relativePath.startsWith("..") &&
+    !path.isAbsolute(relativePath)
+  );
 }
 
 function getWorkspaceCwd(): string | undefined {
