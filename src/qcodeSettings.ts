@@ -31,7 +31,7 @@ export function readQcodeSettings(): QcodeSettings {
     return normalizeSettings(JSON.parse(raw));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.error("Unable to read QCode settings:", error);
+      console.error("Unable to read pi-qcode settings:", error);
     }
     return {
       hashAutocompleteOptions: [],

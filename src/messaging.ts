@@ -150,7 +150,7 @@ function getMsgSocketPath(name: string): string {
 function createSessionTerminal(): vscode.Terminal {
   const cwd = getWorkspaceCwd();
   return vscode.window.createTerminal({
-    name: "QCode Session Message",
+    name: "pi-qcode Session Message",
     ...(cwd ? { cwd } : {}),
   });
 }

@@ -1,10 +1,15 @@
 {
-  "name": "qcode",
-  "displayName": "QCode",
+  "name": "pi-qcode",
+  "displayName": "pi-qcode",
   "description": "A bare minimal VS Code extension home screen for recent Pi sessions.",
   "version": "0.0.1",
   "publisher": "local",
   "license": "UNLICENSED",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#FFFFFF",
+    "theme": "light"
+  },
   "engines": {
     "vscode": "^1.92.0"
   },
@@ -12,65 +17,65 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:qcode.home",
-    "onCommand:qcode.addToQcode",
-    "onCommand:qcode.addTerminalSelectionToQcode"
+    "onView:pi-qcode.home",
+    "onCommand:pi-qcode.addToQcode",
+    "onCommand:pi-qcode.addTerminalSelectionToQcode"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "qcode",
-          "title": "QCode",
+          "id": "pi-qcode",
+          "title": "pi-qcode",
           "icon": "media/icon.svg"
         }
       ]
     },
     "views": {
-      "qcode": [
+      "pi-qcode": [
         {
           "type": "webview",
-          "id": "qcode.home",
-          "name": "Home"
+          "id": "pi-qcode.home",
+          "name": "v0.0.1"
         }
       ]
     },
     "commands": [
       {
-        "command": "qcode.addToQcode",
-        "title": "Add to QCode"
+        "command": "pi-qcode.addToQcode",
+        "title": "Add to pi-qcode"
       },
       {
-        "command": "qcode.addTerminalSelectionToQcode",
-        "title": "Add to QCode"
+        "command": "pi-qcode.addTerminalSelectionToQcode",
+        "title": "Add to pi-qcode"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "command": "qcode.addToQcode",
+          "command": "pi-qcode.addToQcode",
           "when": "editorHasSelection",
           "group": "navigation"
         }
       ],
       "terminal/context": [
         {
-          "command": "qcode.addTerminalSelectionToQcode",
+          "command": "pi-qcode.addTerminalSelectionToQcode",
           "when": "terminalTextSelected",
           "group": "navigation"
         }
       ],
       "commandPalette": [
         {
-          "command": "qcode.addTerminalSelectionToQcode",
+          "command": "pi-qcode.addTerminalSelectionToQcode",
           "when": "false"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "qcode.addToQcode",
+        "command": "pi-qcode.addToQcode",
         "key": "ctrl+;",
         "mac": "cmd+;",
         "when": "editorTextFocus && editorHasSelection"
@@ -81,7 +86,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc --project tsconfig.json",
     "watch": "tsc --watch --project tsconfig.json",
-    "package-install": "npm run compile && vsce package --allow-missing-repository --out qcode-0.0.1.vsix && code --install-extension qcode-0.0.1.vsix --force"
+    "package-install": "npm run compile && vsce package --allow-missing-repository --out pi-qcode-0.0.1.vsix && code --install-extension pi-qcode-0.0.1.vsix --force"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

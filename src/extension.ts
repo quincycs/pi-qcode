@@ -20,7 +20,7 @@ import { renderHome } from "./webviews/home";
 import { renderSessionDetail } from "./webviews/sessionDetail";
 import { renderSettings } from "./webviews/settings";
 
-const viewType = "qcode.home";
+const viewType = "pi-qcode.home";
 
 type Route =
   | { name: "home" }
@@ -58,12 +58,12 @@ export function activate(context: vscode.ExtensionContext): void {
     queueInputText(text);
 
     if (!addToActiveQcodeInput) {
-      await vscode.commands.executeCommand("qcode.home.focus");
+      await vscode.commands.executeCommand("pi-qcode.home.focus");
     }
 
     if (!addToActiveQcodeInput) {
       vscode.window.showInformationMessage(
-        "Open QCode to add selected text to its input.",
+        "Open pi-qcode to add selected text to its input.",
       );
       return;
     }
@@ -72,11 +72,11 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("qcode.addToQcode", async () => {
+    vscode.commands.registerCommand("pi-qcode.addToQcode", async () => {
       await addTextToQcodeInput(getSelectedEditorText());
     }),
     vscode.commands.registerCommand(
-      "qcode.addTerminalSelectionToQcode",
+      "pi-qcode.addTerminalSelectionToQcode",
       async () => {
         await addTextToQcodeInput(await getSelectedTerminalText());
       },

@@ -1,1 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#888" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" aria-hidden="true">
+  <defs>
+    <mask id="qcode-cutouts" maskUnits="userSpaceOnUse">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <circle cx="610" cy="505" r="205" fill="#000"/>
+      <rect x="330" y="335" width="75" height="145" fill="#000"/>
+    </mask>
+  </defs>
+  <g fill="currentColor" mask="url(#qcode-cutouts)">
+    <circle cx="610" cy="505" r="300"/>
+    <polygon points="690,690 810,690 905,805 790,805"/>
+    <rect x="875" y="720" width="50" height="50"/>
+    <rect x="180" y="190" width="150" height="615"/>
+    <rect x="180" y="190" width="345" height="145"/>
+    <rect x="390" y="335" width="135" height="145"/>
+    <rect x="180" y="480" width="210" height="140"/>
+  </g>
+</svg>
