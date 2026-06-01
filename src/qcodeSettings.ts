@@ -7,8 +7,15 @@ export interface HashAutocompleteOption {
   value: string;
 }
 
+export interface ProviderOption {
+  nickname: string;
+  cliArgs: string;
+}
+
 export interface QcodeSettings {
   hashAutocompleteOptions: HashAutocompleteOption[];
+  providerOptions: ProviderOption[];
+  lastUsedProviderNickname: string;
 }
 
 const settingsDirectory = path.join(os.homedir(), ".pi", "qcode");
@@ -26,7 +33,11 @@ export function readQcodeSettings(): QcodeSettings {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       console.error("Unable to read QCode settings:", error);
     }
-    return { hashAutocompleteOptions: [] };
+    return {
+      hashAutocompleteOptions: [],
+      providerOptions: [],
+      lastUsedProviderNickname: "",
+    };
   }
 }
 
@@ -50,7 +61,15 @@ function normalizeSettings(value: unknown): QcodeSettings {
     ? record.hashAutocompleteOptions.flatMap(normalizeHashAutocompleteOption)
     : [];
 
-  return { hashAutocompleteOptions };
+  const providerOptions = Array.isArray(record.providerOptions)
+    ? record.providerOptions.flatMap(normalizeProviderOption)
+    : [];
+
+  const lastUsedProviderNickname = typeof record.lastUsedProviderNickname === "string"
+    ? record.lastUsedProviderNickname.trim()
+    : "";
+
+  return { hashAutocompleteOptions, providerOptions, lastUsedProviderNickname };
 }
 
 function normalizeHashAutocompleteOption(item: unknown): HashAutocompleteOption[] {
@@ -65,4 +84,15 @@ function normalizeHashAutocompleteOption(item: unknown): HashAutocompleteOption[
   if (/\s/.test(command)) return [];
 
   return [{ command, value }];
+}
+
+function normalizeProviderOption(item: unknown): ProviderOption[] {
+  if (!item || typeof item !== "object") return [];
+
+  const record = item as Record<string, unknown>;
+  const nickname = typeof record.nickname === "string" ? record.nickname.trim() : "";
+  const cliArgs = typeof record.cliArgs === "string" ? record.cliArgs.trim() : "";
+  if (!nickname || !cliArgs) return [];
+
+  return [{ nickname, cliArgs }];
 }

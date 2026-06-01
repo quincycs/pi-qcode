@@ -71,6 +71,13 @@ export function renderSettings(
     margin-right: -7px;
     padding: 12px 9px 12px 2px;
   }
+  .settings-section { margin-top: 16px; }
+  .settings-section:first-of-type { margin-top: 0; }
+  .section-title {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 700;
+  }
   .description {
     margin: 0 0 12px;
     color: var(--vscode-descriptionForeground);
@@ -164,89 +171,175 @@ export function renderSettings(
       <div class="title">Settings</div>
     </header>
     <section class="body">
-      <p class="description">Manage # autocomplete options. The command is what you type, and the value is inserted when selected.</p>
       <p class="path">Saved at ${escapeHtml(settingsFilePath)}</p>
-      <div class="options" id="options"></div>
-      <div class="actions">
-        <button type="button" class="add-button" id="add-button">Add option</button>
-      </div>
+
+      <section class="settings-section" aria-labelledby="provider-options-title">
+        <h2 class="section-title" id="provider-options-title">Provider Options</h2>
+        <div class="options" id="provider-options"></div>
+        <div class="actions">
+          <button type="button" class="add-button" id="add-provider-button">Add provider</button>
+        </div>
+      </section>
+
+      <section class="settings-section" aria-labelledby="command-options-title">
+        <h2 class="section-title" id="command-options-title">Command Options</h2>
+        <p class="description">Manage # autocomplete options. The command is what you type, and the value is inserted when selected.</p>
+        <div class="options" id="hash-options"></div>
+        <div class="actions">
+          <button type="button" class="add-button" id="add-hash-button">Add option</button>
+        </div>
+      </section>
+
       <div class="status" id="status" aria-live="polite"></div>
     </section>
   </main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    const optionsContainer = document.getElementById('options');
+    const providerOptionsContainer = document.getElementById('provider-options');
+    const hashOptionsContainer = document.getElementById('hash-options');
     const status = document.getElementById('status');
-    let options = ${toScriptJson(settings.hashAutocompleteOptions)};
-    let editingIndex = -1;
-    let editingIsNew = false;
-    let draft = { command: '', value: '' };
+    let providerOptions = ${toScriptJson(settings.providerOptions)};
+    let hashOptions = ${toScriptJson(settings.hashAutocompleteOptions)};
+    let lastUsedProviderNickname = ${toScriptJson(settings.lastUsedProviderNickname)};
+    let editing = null;
+    let providerDraft = { nickname: '', cliArgs: '' };
+    let hashDraft = { command: '', value: '' };
 
     const setStatus = (message, isError = false) => {
       status.textContent = message;
       status.classList.toggle('error', isError);
     };
-    const collectOptions = () => options.map((option) => ({
+    const resetDrafts = () => {
+      providerDraft = { nickname: '', cliArgs: '' };
+      hashDraft = { command: '', value: '' };
+    };
+    const discardPendingEdit = () => {
+      if (!editing) return true;
+      if (!confirm('Discard unsaved changes?')) return false;
+
+      if (editing.isNew && editing.index >= 0) {
+        if (editing.kind === 'provider') {
+          providerOptions.splice(editing.index, 1);
+        } else {
+          hashOptions.splice(editing.index, 1);
+        }
+      }
+
+      editing = null;
+      resetDrafts();
+      return true;
+    };
+    const collectProviderOptions = () => providerOptions.map((option) => ({
+      nickname: String(option.nickname || '').trim(),
+      cliArgs: String(option.cliArgs || '').trim(),
+    })).filter((option) => option.nickname && option.cliArgs);
+    const collectHashOptions = () => hashOptions.map((option) => ({
       command: String(option.command || '').trim(),
       value: String(option.value || ''),
     })).filter((option) => option.command && option.value);
-    const persistOptions = () => {
+    const persistSettings = () => {
       setStatus('Saving...');
       vscode.postMessage({
         command: 'saveSettings',
-        settings: { hashAutocompleteOptions: collectOptions() },
+        settings: {
+          providerOptions: collectProviderOptions(),
+          hashAutocompleteOptions: collectHashOptions(),
+          lastUsedProviderNickname,
+        },
       });
     };
-    const beginEdit = (index, isNew = false) => {
-      if (editingIndex !== -1 && editingIndex !== index && !confirm('Discard unsaved changes?')) return;
-      editingIndex = index;
-      editingIsNew = isNew;
-      draft = {
-        command: String(options[index]?.command || ''),
-        value: String(options[index]?.value || ''),
+    const focusFirstEditInput = (kind) => {
+      const container = kind === 'provider' ? providerOptionsContainer : hashOptionsContainer;
+      const input = container.querySelector(kind === 'provider' ? '[data-nickname-input]' : '[data-command-input]');
+      if (input) input.focus();
+    };
+    const beginProviderEdit = (index, isNew = false) => {
+      if (editing && (editing.kind !== 'provider' || editing.index !== index) && !discardPendingEdit()) return;
+      if (isNew) index = providerOptions.length - 1;
+      editing = { kind: 'provider', index, isNew };
+      providerDraft = {
+        nickname: String(providerOptions[index]?.nickname || ''),
+        cliArgs: String(providerOptions[index]?.cliArgs || ''),
       };
-      renderOptions();
-      const commandInput = optionsContainer.querySelector('[data-command-input]');
-      if (commandInput) commandInput.focus();
+      renderAll();
+      focusFirstEditInput('provider');
+    };
+    const beginHashEdit = (index, isNew = false) => {
+      if (editing && (editing.kind !== 'hash' || editing.index !== index) && !discardPendingEdit()) return;
+      if (isNew) index = hashOptions.length - 1;
+      editing = { kind: 'hash', index, isNew };
+      hashDraft = {
+        command: String(hashOptions[index]?.command || ''),
+        value: String(hashOptions[index]?.value || ''),
+      };
+      renderAll();
+      focusFirstEditInput('hash');
     };
     const cancelEdit = () => {
-      if (editingIsNew && editingIndex >= 0) {
-        options.splice(editingIndex, 1);
+      if (editing?.isNew && editing.index >= 0) {
+        if (editing.kind === 'provider') {
+          providerOptions.splice(editing.index, 1);
+        } else {
+          hashOptions.splice(editing.index, 1);
+        }
       }
-      editingIndex = -1;
-      editingIsNew = false;
-      draft = { command: '', value: '' };
-      renderOptions();
+      editing = null;
+      resetDrafts();
+      renderAll();
       setStatus('');
     };
     const saveEdit = () => {
-      if (editingIndex < 0) return;
+      if (!editing) return;
 
-      const command = String(draft.command || '').trim();
-      const value = String(draft.value || '');
-      if (!command || !value) {
-        setStatus('Command and value are required.', true);
-        return;
+      if (editing.kind === 'provider') {
+        const nickname = String(providerDraft.nickname || '').trim();
+        const cliArgs = String(providerDraft.cliArgs || '').trim();
+        if (!nickname || !cliArgs) {
+          setStatus('Provider nickname and Pi CLI args are required.', true);
+          return;
+        }
+
+        providerOptions[editing.index] = { nickname, cliArgs };
+      } else {
+        const command = String(hashDraft.command || '').trim();
+        const value = String(hashDraft.value || '');
+        if (!command || !value) {
+          setStatus('Command and value are required.', true);
+          return;
+        }
+
+        hashOptions[editing.index] = { command, value };
       }
 
-      options[editingIndex] = { command, value };
-      persistOptions();
+      persistSettings();
     };
-    const requestDeleteOption = (index) => {
+    const requestDeleteProviderOption = (index) => {
+      vscode.postMessage({
+        command: 'confirmDeleteProviderOption',
+        index,
+        label: providerOptions[index]?.nickname || 'this provider',
+      });
+    };
+    const requestDeleteHashOption = (index) => {
       vscode.postMessage({
         command: 'confirmDeleteHashOption',
         index,
-        label: options[index]?.command || 'this option',
+        label: hashOptions[index]?.command || 'this option',
       });
     };
-    const deleteOption = (index) => {
-      options.splice(index, 1);
-      editingIndex = -1;
-      editingIsNew = false;
-      draft = { command: '', value: '' };
-      persistOptions();
+    const deleteProviderOption = (index) => {
+      providerOptions.splice(index, 1);
+      editing = null;
+      resetDrafts();
+      persistSettings();
     };
-    const renderDisplayRow = (option, index) => {
+    const deleteHashOption = (index) => {
+      hashOptions.splice(index, 1);
+      editing = null;
+      resetDrafts();
+      persistSettings();
+    };
+    const renderDisplayRow = (container, titleText, subtitleText, editLabel, onEdit) => {
       const row = document.createElement('div');
       row.className = 'option-card option-display';
 
@@ -255,11 +348,11 @@ export function renderSettings(
 
       const title = document.createElement('div');
       title.className = 'option-title';
-      title.textContent = option.command || '#';
+      title.textContent = titleText;
 
       const subtitle = document.createElement('div');
       subtitle.className = 'option-subtitle';
-      subtitle.textContent = option.value || '';
+      subtitle.textContent = subtitleText;
 
       text.append(title, subtitle);
 
@@ -268,42 +361,13 @@ export function renderSettings(
       editButton.className = 'edit-button';
       editButton.textContent = '✎';
       editButton.title = 'Edit';
-      editButton.ariaLabel = 'Edit ' + (option.command || 'option');
-      editButton.addEventListener('click', () => beginEdit(index));
+      editButton.ariaLabel = editLabel;
+      editButton.addEventListener('click', onEdit);
 
       row.append(text, editButton);
-      optionsContainer.append(row);
+      container.append(row);
     };
-    const renderEditRow = (index) => {
-      const row = document.createElement('div');
-      row.className = 'option-card option-edit';
-
-      const fields = document.createElement('div');
-      fields.className = 'edit-fields';
-
-      const command = document.createElement('input');
-      command.type = 'text';
-      command.placeholder = '#c';
-      command.ariaLabel = '# command';
-      command.dataset.commandInput = 'true';
-      command.value = draft.command;
-      command.addEventListener('input', () => {
-        draft.command = command.value;
-        setStatus('Unsaved changes');
-      });
-
-      const value = document.createElement('textarea');
-      value.rows = 5;
-      value.placeholder = 'value to insert';
-      value.ariaLabel = 'Inserted value';
-      value.value = draft.value;
-      value.addEventListener('input', () => {
-        draft.value = value.value;
-        setStatus('Unsaved changes');
-      });
-
-      fields.append(command, value);
-
+    const appendEditActions = (row, onDelete) => {
       const actions = document.createElement('div');
       actions.className = 'row-actions';
 
@@ -323,40 +387,145 @@ export function renderSettings(
       deleteButton.type = 'button';
       deleteButton.className = 'delete-button';
       deleteButton.textContent = 'Delete';
-      deleteButton.addEventListener('click', () => requestDeleteOption(index));
+      deleteButton.addEventListener('click', onDelete);
 
       actions.append(saveButton, cancelButton, deleteButton);
-      row.append(fields, actions);
-
-
-      optionsContainer.append(row);
+      row.append(actions);
     };
-    const renderOptions = () => {
-      optionsContainer.replaceChildren();
-      if (!options.length) {
+    const renderProviderEditRow = (index) => {
+      const row = document.createElement('div');
+      row.className = 'option-card option-edit';
+
+      const fields = document.createElement('div');
+      fields.className = 'edit-fields';
+
+      const nickname = document.createElement('input');
+      nickname.type = 'text';
+      nickname.placeholder = 'Provider nickname';
+      nickname.ariaLabel = 'Provider nickname';
+      nickname.dataset.nicknameInput = 'true';
+      nickname.value = providerDraft.nickname;
+      nickname.addEventListener('input', () => {
+        providerDraft.nickname = nickname.value;
+        setStatus('Unsaved changes');
+      });
+
+      const cliArgs = document.createElement('input');
+      cliArgs.type = 'text';
+      cliArgs.placeholder = '--model openai-codex/gpt-5.5';
+      cliArgs.ariaLabel = 'Pi CLI args';
+      cliArgs.value = providerDraft.cliArgs;
+      cliArgs.addEventListener('input', () => {
+        providerDraft.cliArgs = cliArgs.value;
+        setStatus('Unsaved changes');
+      });
+
+      fields.append(nickname, cliArgs);
+      row.append(fields);
+      appendEditActions(row, () => requestDeleteProviderOption(index));
+      providerOptionsContainer.append(row);
+    };
+    const renderHashEditRow = (index) => {
+      const row = document.createElement('div');
+      row.className = 'option-card option-edit';
+
+      const fields = document.createElement('div');
+      fields.className = 'edit-fields';
+
+      const command = document.createElement('input');
+      command.type = 'text';
+      command.placeholder = '#c';
+      command.ariaLabel = '# command';
+      command.dataset.commandInput = 'true';
+      command.value = hashDraft.command;
+      command.addEventListener('input', () => {
+        hashDraft.command = command.value;
+        setStatus('Unsaved changes');
+      });
+
+      const value = document.createElement('textarea');
+      value.rows = 5;
+      value.placeholder = 'value to insert';
+      value.ariaLabel = 'Inserted value';
+      value.value = hashDraft.value;
+      value.addEventListener('input', () => {
+        hashDraft.value = value.value;
+        setStatus('Unsaved changes');
+      });
+
+      fields.append(command, value);
+      row.append(fields);
+      appendEditActions(row, () => requestDeleteHashOption(index));
+      hashOptionsContainer.append(row);
+    };
+    const renderProviderOptions = () => {
+      providerOptionsContainer.replaceChildren();
+      if (!providerOptions.length) {
         const empty = document.createElement('div');
         empty.className = 'empty';
-        empty.textContent = 'No # autocomplete options configured.';
-        optionsContainer.append(empty);
+        empty.textContent = 'No provider options configured.';
+        providerOptionsContainer.append(empty);
         return;
       }
 
-      options.forEach((option, index) => {
-        if (index === editingIndex) {
-          renderEditRow(index);
+      providerOptions.forEach((option, index) => {
+        if (editing?.kind === 'provider' && editing.index === index) {
+          renderProviderEditRow(index);
         } else {
-          renderDisplayRow(option, index);
+          const nickname = option.nickname || 'Provider';
+          renderDisplayRow(
+            providerOptionsContainer,
+            nickname,
+            option.cliArgs || '',
+            'Edit ' + nickname,
+            () => beginProviderEdit(index),
+          );
         }
       });
+    };
+    const renderHashOptions = () => {
+      hashOptionsContainer.replaceChildren();
+      if (!hashOptions.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No # autocomplete options configured.';
+        hashOptionsContainer.append(empty);
+        return;
+      }
+
+      hashOptions.forEach((option, index) => {
+        if (editing?.kind === 'hash' && editing.index === index) {
+          renderHashEditRow(index);
+        } else {
+          const command = option.command || '#';
+          renderDisplayRow(
+            hashOptionsContainer,
+            command,
+            option.value || '',
+            'Edit ' + command,
+            () => beginHashEdit(index),
+          );
+        }
+      });
+    };
+    const renderAll = () => {
+      renderProviderOptions();
+      renderHashOptions();
     };
 
     document.getElementById('home-button').addEventListener('click', () => {
       vscode.postMessage({ command: 'home' });
     });
-    document.getElementById('add-button').addEventListener('click', () => {
-      if (editingIndex !== -1 && !confirm('Discard unsaved changes?')) return;
-      options.push({ command: '#', value: '' });
-      beginEdit(options.length - 1, true);
+    document.getElementById('add-provider-button').addEventListener('click', () => {
+      if (!discardPendingEdit()) return;
+      providerOptions.push({ nickname: '', cliArgs: '' });
+      beginProviderEdit(providerOptions.length - 1, true);
+      setStatus('Unsaved changes');
+    });
+    document.getElementById('add-hash-button').addEventListener('click', () => {
+      if (!discardPendingEdit()) return;
+      hashOptions.push({ command: '#', value: '' });
+      beginHashEdit(hashOptions.length - 1, true);
       setStatus('Unsaved changes');
     });
     window.addEventListener('message', (event) => {
@@ -364,13 +533,18 @@ export function renderSettings(
       if (!data) return;
 
       if (data.command === 'settingsSaved') {
-        options = Array.isArray(data.settings && data.settings.hashAutocompleteOptions)
+        providerOptions = Array.isArray(data.settings && data.settings.providerOptions)
+          ? data.settings.providerOptions
+          : [];
+        hashOptions = Array.isArray(data.settings && data.settings.hashAutocompleteOptions)
           ? data.settings.hashAutocompleteOptions
           : [];
-        editingIndex = -1;
-        editingIsNew = false;
-        draft = { command: '', value: '' };
-        renderOptions();
+        lastUsedProviderNickname = typeof (data.settings && data.settings.lastUsedProviderNickname) === 'string'
+          ? data.settings.lastUsedProviderNickname
+          : '';
+        editing = null;
+        resetDrafts();
+        renderAll();
         setStatus('Saved');
         return;
       }
@@ -380,11 +554,16 @@ export function renderSettings(
         return;
       }
 
+      if (data.command === 'deleteProviderOptionConfirmed') {
+        deleteProviderOption(Number(data.index));
+        return;
+      }
+
       if (data.command === 'deleteHashOptionConfirmed') {
-        deleteOption(Number(data.index));
+        deleteHashOption(Number(data.index));
       }
     });
-    renderOptions();
+    renderAll();
   </script>
 </body>
 </html>`;

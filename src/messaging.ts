@@ -32,11 +32,12 @@ export async function sendSessionMessage(
   messageSessions: MessageSessionMap,
   filePath: string,
   text: string,
+  providerCliArgs = "",
 ): Promise<SendSessionMessageResult> {
   if (!text) return {};
 
   if (!filePath) {
-    return startNewSessionMessage(messageSessions, text);
+    return startNewSessionMessage(messageSessions, text, providerCliArgs);
   }
 
   if (!isSessionFile(filePath)) {
@@ -70,6 +71,7 @@ export async function sendSessionMessage(
 async function startNewSessionMessage(
   messageSessions: MessageSessionMap,
   text: string,
+  providerCliArgs: string,
 ): Promise<SendSessionMessageResult> {
   const cwd = getWorkspaceCwd();
   if (!cwd) {
@@ -84,7 +86,7 @@ async function startNewSessionMessage(
   const terminal = createSessionTerminal();
 
   terminal.show();
-  terminal.sendText(buildNewSessionMessageCommand(guid, text));
+  terminal.sendText(buildNewSessionMessageCommand(guid, text, providerCliArgs));
 
   const sessionFilePath = await waitForNewSessionFile(cwd, before);
   if (!sessionFilePath) {
@@ -172,9 +174,14 @@ function buildSessionMessageCommand(
   ].join(" ");
 }
 
-function buildNewSessionMessageCommand(guid: string, message: string): string {
+function buildNewSessionMessageCommand(
+  guid: string,
+  message: string,
+  providerCliArgs: string,
+): string {
   return [
     "pi",
+    ...splitCliArgs(providerCliArgs).map(shellEscape),
     shellEscape(`/msg-on ${guid}`),
     shellEscape(encodeMessageArgument(message)),
   ].join(" ");
@@ -185,6 +192,45 @@ function encodeMessageArgument(message: string): string {
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .replace(/\n/g, "\\n");
+}
+
+function splitCliArgs(value: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | undefined;
+  let escaping = false;
+
+  for (const character of value.trim()) {
+    if (escaping) {
+      current += character;
+      escaping = false;
+      continue;
+    }
+
+    if (character === "\\" && quote !== "'") {
+      escaping = true;
+      continue;
+    }
+
+    if ((character === '"' || character === "'") && (!quote || quote === character)) {
+      quote = quote ? undefined : character;
+      continue;
+    }
+
+    if (/\s/.test(character) && !quote) {
+      if (current) {
+        args.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += character;
+  }
+
+  if (escaping) current += "\\";
+  if (current) args.push(current);
+  return args;
 }
 
 function shellEscape(value: string): string {

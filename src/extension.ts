@@ -35,7 +35,9 @@ type WebviewMessage =
   | { command: "settings" }
   | { command: "saveSettings"; settings?: unknown }
   | { command: "confirmDeleteHashOption"; index?: number; label?: string }
-  | { command: "sendMessage"; filePath?: string; text?: string }
+  | { command: "confirmDeleteProviderOption"; index?: number; label?: string }
+  | { command: "saveLastUsedProvider"; nickname?: string }
+  | { command: "sendMessage"; filePath?: string; text?: string; providerCliArgs?: string }
   | { command: "openFileReference"; value?: string }
   | { command: "openExternalUrl"; value?: string }
   | { command: "resolveFileReferences"; requestId?: number; values?: unknown }
@@ -120,9 +122,12 @@ export function activate(context: vscode.ExtensionContext): void {
           stopSessionWatcher();
           detailWebviewReady = false;
           const session: SessionDetail = { title: "New Session", messages: [] };
+          const settings = readQcodeSettings();
           currentRoute = { name: "sessionDetail" };
           view.webview.html = renderSessionDetail("", getNonce(), session, {
             autoFocus: true,
+            providerOptions: settings.providerOptions,
+            lastUsedProviderNickname: settings.lastUsedProviderNickname,
           });
         };
 
@@ -149,6 +154,7 @@ export function activate(context: vscode.ExtensionContext): void {
             messageSessions,
             String(message.filePath || ""),
             String(message.text || ""),
+            String(message.providerCliArgs || ""),
           );
 
           if (result.sessionFilePath) {
@@ -241,10 +247,25 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         };
 
-        const handleConfirmDeleteHashOption = async (
+        const handleSaveLastUsedProvider = async (
+          message: Extract<WebviewMessage, { command: "saveLastUsedProvider" }>,
+        ) => {
+          try {
+            const settings = readQcodeSettings();
+            await writeQcodeSettings({
+              ...settings,
+              lastUsedProviderNickname: String(message.nickname || ""),
+            });
+          } catch (error) {
+            console.error("Unable to save last used provider:", error);
+          }
+        };
+
+        const confirmDeleteOption = async (
           message: Extract<
             WebviewMessage,
-            { command: "confirmDeleteHashOption" }
+            | { command: "confirmDeleteHashOption" }
+            | { command: "confirmDeleteProviderOption" }
           >,
         ) => {
           const label = String(message.label || "this option");
@@ -256,7 +277,9 @@ export function activate(context: vscode.ExtensionContext): void {
           if (confirmed !== "Delete") return;
 
           await view.webview.postMessage({
-            command: "deleteHashOptionConfirmed",
+            command: message.command === "confirmDeleteProviderOption"
+              ? "deleteProviderOptionConfirmed"
+              : "deleteHashOptionConfirmed",
             index: Number(message.index),
           });
         };
@@ -341,8 +364,15 @@ export function activate(context: vscode.ExtensionContext): void {
             void handleSaveSettings(message);
           }
 
-          if (message.command === "confirmDeleteHashOption") {
-            void handleConfirmDeleteHashOption(message);
+          if (message.command === "saveLastUsedProvider") {
+            void handleSaveLastUsedProvider(message);
+          }
+
+          if (
+            message.command === "confirmDeleteHashOption" ||
+            message.command === "confirmDeleteProviderOption"
+          ) {
+            void confirmDeleteOption(message);
           }
         });
 

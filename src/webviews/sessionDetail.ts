@@ -1,3 +1,4 @@
+import type { ProviderOption } from "../qcodeSettings";
 import type { SessionDetail } from "../sessionFiles";
 import { escapeHtml } from "../utils";
 import {
@@ -10,8 +11,17 @@ export function renderSessionDetail(
   filePath: string,
   nonce: string,
   session: SessionDetail,
-  options: { autoFocus?: boolean; initialInput?: string } = {},
+  options: {
+    autoFocus?: boolean;
+    initialInput?: string;
+    providerOptions?: ProviderOption[];
+    lastUsedProviderNickname?: string;
+  } = {},
 ): string {
+  const isDraftSession = !filePath && !session.filePath && !session.error;
+  const providerOptions = options.providerOptions ?? [];
+  const lastUsedProviderNickname = options.lastUsedProviderNickname ?? "";
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -122,6 +132,31 @@ export function renderSessionDetail(
     text-transform: uppercase;
   }
 ${messageRenderingStyles}
+  .draft-provider-options {
+    margin-bottom: 12px;
+    padding: 10px;
+    color: var(--vscode-foreground);
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-widget-border, transparent);
+    border-radius: 5px;
+  }
+  .draft-provider-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .draft-provider-select {
+    width: 100%;
+    min-width: 0;
+    padding: 5px 6px;
+    color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
+    background: var(--vscode-dropdown-background, var(--vscode-input-background));
+    border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border, transparent));
+    border-radius: 3px;
+    font: inherit;
+  }
+  .draft-provider-message,
   .empty-messages {
     color: var(--vscode-descriptionForeground);
     line-height: 1.45;
@@ -227,7 +262,12 @@ ${messageRenderingStyles}
       <div class="context-usage" id="context-usage" aria-label="Context window usage" title="Context usage unavailable">—</div>
     </header>
     <section class="body">
-      ${renderSessionDetailBody(session)}
+      ${renderSessionDetailBody(
+        session,
+        providerOptions,
+        isDraftSession,
+        lastUsedProviderNickname,
+      )}
     </section>
     <form class="footer" id="message-form" data-file-path="${escapeHtml(filePath)}">
       <div class="typeahead" id="typeahead" role="listbox" aria-label="Autocomplete suggestions" hidden>
@@ -250,6 +290,8 @@ ${messageRenderingStyles}
     let selectedSuggestionIndex = 0;
     let searchRequestId = 0;
     let searchTimer = undefined;
+    const providerOptions = ${toScriptJson(providerOptions)};
+    const lastUsedProviderNickname = ${toScriptJson(lastUsedProviderNickname)};
 
     const resizeInput = () => {
       input.style.height = 'auto';
@@ -492,6 +534,22 @@ ${messageRenderingScript}
       resizeInput();
       input.focus();
     };
+    const getSelectedProviderOption = () => {
+      if (form.dataset.filePath) return undefined;
+
+      const select = document.getElementById('draft-provider-select');
+      if (!select) return undefined;
+
+      const index = Number(select.value);
+      if (!Number.isInteger(index) || index < 0 || index >= providerOptions.length) return undefined;
+      return providerOptions[index];
+    };
+    const getSelectedProviderCliArgs = () => {
+      return String(getSelectedProviderOption()?.cliArgs || '');
+    };
+    const removeDraftProviderOptions = () => {
+      document.getElementById('draft-provider-options')?.remove();
+    };
     const initialInput = ${toScriptString(options.initialInput ?? "")};
     qcodeMessageRendering.installClickHandlers(vscode);
     qcodeMessageRendering.renderExistingMessages();
@@ -500,6 +558,14 @@ ${messageRenderingScript}
 
     document.getElementById('home-button').addEventListener('click', () => {
       vscode.postMessage({ command: 'home' });
+    });
+    document.getElementById('draft-provider-select')?.addEventListener('change', (event) => {
+      const target = event.target;
+      const index = Number(target && target.value);
+      const nickname = Number.isInteger(index) && index >= 0 && index < providerOptions.length
+        ? String(providerOptions[index]?.nickname || '')
+        : '';
+      vscode.postMessage({ command: 'saveLastUsedProvider', nickname });
     });
     input.addEventListener('input', () => {
       resizeInput();
@@ -597,12 +663,15 @@ ${messageRenderingScript}
       if (!input.value) return;
 
       const sentText = input.value;
+      const providerCliArgs = getSelectedProviderCliArgs();
       hideTypeahead();
       vscode.postMessage({
         command: 'sendMessage',
         filePath: form.dataset.filePath || '',
         text: sentText,
+        providerCliArgs,
       });
+      removeDraftProviderOptions();
       appendMessage({ role: 'user', kind: 'message', text: sentText });
       requestAnimationFrame(scrollLastMessageTop);
       input.value = '';
@@ -628,13 +697,22 @@ function toScriptJson(value: unknown): string {
   return JSON.stringify(value ?? null).replace(/</g, "\\u003c");
 }
 
-function renderSessionDetailBody(session: SessionDetail): string {
+function renderSessionDetailBody(
+  session: SessionDetail,
+  providerOptions: ProviderOption[],
+  isDraftSession: boolean,
+  lastUsedProviderNickname: string,
+): string {
   if (session.error) {
     return `<div class="error">${escapeHtml(session.error)}</div>`;
   }
 
   if (!session.filePath) {
-    return '<div class="messages" id="messages"></div>';
+    return `${
+      isDraftSession
+        ? renderDraftProviderOptions(providerOptions, lastUsedProviderNickname)
+        : ""
+    }<div class="messages" id="messages"></div>`;
   }
 
   const messages = session.messages.length
@@ -642,5 +720,27 @@ function renderSessionDetailBody(session: SessionDetail): string {
     : '<div class="empty-messages">No messages found in this session.</div>';
 
   return `<div class="messages" id="messages">${messages}</div>`;
+}
+
+function renderDraftProviderOptions(
+  providerOptions: ProviderOption[],
+  lastUsedProviderNickname: string,
+): string {
+  if (!providerOptions.length) {
+    return `<div class="draft-provider-options" id="draft-provider-options"><div class="draft-provider-message">Pi will start with default settings, but you can change what model Pi uses by creating a provider setting in the settings page.</div></div>`;
+  }
+
+  const selectedIndex = providerOptions.findIndex(
+    (option) => option.nickname === lastUsedProviderNickname,
+  );
+  const options = providerOptions
+    .map((option, index) => {
+      const selected = index === selectedIndex ? ' selected' : '';
+      return `<option value="${index}"${selected}>${escapeHtml(option.nickname)}</option>`;
+    })
+    .join("");
+  const defaultSelected = selectedIndex === -1 ? " selected" : "";
+
+  return `<div class="draft-provider-options" id="draft-provider-options"><label class="draft-provider-label" for="draft-provider-select">Provider</label><select class="draft-provider-select" id="draft-provider-select"><option value=""${defaultSelected}>Default Pi settings</option>${options}</select></div>`;
 }
 
