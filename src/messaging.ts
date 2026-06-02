@@ -170,7 +170,7 @@ function buildSessionMessageCommand(
     "--session",
     shellEscape(sessionFilePath),
     shellEscape(`/msg-on ${guid}`),
-    shellEscape(encodeMessageArgument(message)),
+    shellEscape(normalizeMessageArgument(message)),
   ].join(" ");
 }
 
@@ -183,15 +183,12 @@ function buildNewSessionMessageCommand(
     "pi",
     ...splitCliArgs(providerCliArgs).map(shellEscape),
     shellEscape(`/msg-on ${guid}`),
-    shellEscape(encodeMessageArgument(message)),
+    shellEscape(normalizeMessageArgument(message)),
   ].join(" ");
 }
 
-function encodeMessageArgument(message: string): string {
-  return message
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .replace(/\n/g, "\\n");
+function normalizeMessageArgument(message: string): string {
+  return message.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
 function splitCliArgs(value: string): string[] {

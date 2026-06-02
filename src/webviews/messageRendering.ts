@@ -290,14 +290,22 @@ export const messageRenderingScript = String.raw`
         return html;
       };
       const renderPlainText = (text) => renderPlainSegment(String(text || '')).replace(/\n/g, '<br>');
+      const normalizeDisplayText = (message) => {
+        let text = String((message && message.text) || '');
+        if ((message && message.role) === 'user' && !/[\r\n]/.test(text) && /\\[rn]/.test(text)) {
+          text = text.replace(/\\r\\n|\\n|\\r/g, '\n');
+        }
+        return text.replace(/\r\n?/g, '\n');
+      };
       const renderMessageTextElement = (element, message) => {
-        const text = message.text || '';
+        const rawText = String((message && message.text) || '');
+        const text = normalizeDisplayText(message);
         collectFileReferences(text);
         const isMarkdown = message.kind !== 'thinking' && message.role !== 'user';
         element.className = 'message-text ' + (isMarkdown ? 'markdown-body' : 'plain-text');
         element.dataset.messageRole = message.role || '';
         element.dataset.messageKind = message.kind || 'message';
-        element.dataset.messageText = text;
+        element.dataset.messageText = rawText;
         element.innerHTML = isMarkdown ? renderMarkdown(text) : renderPlainText(text);
         flushFileReferenceChecks();
       };
