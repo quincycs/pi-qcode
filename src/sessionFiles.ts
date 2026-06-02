@@ -529,9 +529,10 @@ function readRenderableSessionMessage(entry: Record<string, unknown>): SessionMe
 
   const message = messageEntry as Record<string, unknown>;
   const role = String(message.role || "message");
-  if (role !== "user" && !hasFinalPhase(entry)) return null;
+  const errorMessage = role === "assistant" ? readAssistantErrorMessage(message, entry) : "";
+  if (role !== "user" && !errorMessage && !hasFinalPhase(entry)) return null;
 
-  const text = readText(message.content);
+  const text = errorMessage || readText(message.content);
   if (!text) return null;
 
   return {
@@ -539,6 +540,25 @@ function readRenderableSessionMessage(entry: Record<string, unknown>): SessionMe
     text,
     kind: "message",
   };
+}
+
+function readAssistantErrorMessage(
+  message: Record<string, unknown>,
+  entry: Record<string, unknown>,
+): string {
+  const stopReason = typeof message.stopReason === "string"
+    ? message.stopReason
+    : typeof entry.stopReason === "string"
+      ? entry.stopReason
+      : "";
+  if (stopReason !== "error") return "";
+
+  const errorMessage = typeof message.errorMessage === "string"
+    ? message.errorMessage
+    : typeof entry.errorMessage === "string"
+      ? entry.errorMessage
+      : "";
+  return errorMessage.trim();
 }
 
 function getThinkingEntryCounts(entry: Record<string, unknown>): Record<string, number> {
