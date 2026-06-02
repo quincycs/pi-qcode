@@ -191,13 +191,30 @@ interface UsageRecord {
   costTotal?: number;
 }
 
-function readText(content: unknown): string {
-  if (typeof content === "string") return content;
+function readText(
+  content: unknown,
+  options: { collapseSkillContent?: boolean } = {},
+): string {
+  if (typeof content === "string") {
+    return options.collapseSkillContent ? collapseSkillContent(content) : content;
+  }
   if (!Array.isArray(content)) return "";
   return content
     .filter((item) => item && item.type === "text" && typeof item.text === "string")
-    .map((item) => item.text as string)
+    .map((item) => {
+      const text = item.text as string;
+      return options.collapseSkillContent ? collapseSkillContent(text) : text;
+    })
     .join("\n");
+}
+
+function collapseSkillContent(text: string): string {
+  const trimmedText = text.trim();
+  if (!trimmedText.endsWith("</skill>")) return text;
+
+  const match = trimmedText.match(/^<skill\s+name=(['"])([^'"]+)\1(?:\s|>)/);
+  const skillName = match?.[2]?.trim();
+  return skillName ? `/skill:${skillName}` : text;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {
@@ -319,7 +336,7 @@ function parseSessionFile(filePath: string): RecentSession | null {
 
         if (entry.type === "message" && entry.message) {
           if (entry.message.role === "user") {
-            const text = readText(entry.message.content);
+            const text = readText(entry.message.content, { collapseSkillContent: true });
             if (text && !text.startsWith("You are running inside VS Code")) {
               const preview = text.slice(0, 160).replace(/\s+/g, " ").trim();
               if (!firstUserMessage) firstUserMessage = preview;
@@ -532,7 +549,9 @@ function readRenderableSessionMessage(entry: Record<string, unknown>): SessionMe
   const errorMessage = role === "assistant" ? readAssistantErrorMessage(message, entry) : "";
   if (role !== "user" && !errorMessage && !hasFinalPhase(entry)) return null;
 
-  const text = errorMessage || readText(message.content);
+  const text = errorMessage || readText(message.content, {
+    collapseSkillContent: role === "user",
+  });
   if (!text) return null;
 
   return {
