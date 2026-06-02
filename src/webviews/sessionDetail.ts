@@ -273,7 +273,7 @@ ${messageRenderingStyles}
       <div class="typeahead" id="typeahead" role="listbox" aria-label="Autocomplete suggestions" hidden>
         <div class="typeahead-list" id="typeahead-list"></div>
       </div>
-      <textarea class="message-input" id="message-input" rows="1" aria-label="Message" placeholder="${escapeHtml(getMessagePlaceholder())}"></textarea>
+      <textarea class="message-input" id="message-input" rows="2" aria-label="Message" placeholder="${escapeHtml(getMessagePlaceholder())}"></textarea>
       <button class="submit-button" id="submit-button" type="submit" aria-label="Submit">➤</button>
     </form>
   </main>
@@ -735,7 +735,7 @@ function renderDraftProviderOptions(
   );
   const options = providerOptions
     .map((option, index) => {
-      const selected = index === selectedIndex ? ' selected' : '';
+      const selected = index === selectedIndex ? " selected" : "";
       return `<option value="${index}"${selected}>${escapeHtml(option.nickname)}</option>`;
     })
     .join("");
@@ -743,4 +743,3 @@ function renderDraftProviderOptions(
 
   return `<div class="draft-provider-options" id="draft-provider-options"><label class="draft-provider-label" for="draft-provider-select">Provider</label><select class="draft-provider-select" id="draft-provider-select"><option value=""${defaultSelected}>Default Pi settings</option>${options}</select></div>`;
 }
-
