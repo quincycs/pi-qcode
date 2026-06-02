@@ -570,7 +570,7 @@ function readAssistantErrorMessage(
     : typeof entry.stopReason === "string"
       ? entry.stopReason
       : "";
-  if (stopReason !== "error") return "";
+  if (stopReason !== "error" && stopReason !== "aborted") return "";
 
   const errorMessage = typeof message.errorMessage === "string"
     ? message.errorMessage
