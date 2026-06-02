@@ -309,18 +309,23 @@ ${messageRenderingStyles}
       empty.textContent = 'No messages found in this session.';
       messages.append(empty);
     };
+    const renderedMessages = ${toScriptJson(session.messages)};
+    const isThinkingMessage = (message) => Boolean(message && message.kind === 'thinking');
+    const messageRenderSlot = (message) => {
+      if (!message) return '';
+      return (message.kind || 'message') + ':' + (message.role || '');
+    };
+    const shouldScrollForReplacement = (newMessages) => {
+      if (!Array.isArray(newMessages) || !newMessages.length) return false;
+      if (!renderedMessages.length) return true;
+      if (newMessages.length > renderedMessages.length) return true;
+
+      const previousLast = renderedMessages[renderedMessages.length - 1];
+      const nextLast = newMessages[newMessages.length - 1];
+      return messageRenderSlot(previousLast) !== messageRenderSlot(nextLast);
+    };
 ${messageRenderingScript}
-    const appendMessage = (message) => {
-      if (!messages) return;
-
-      const empty = messages.querySelector('.empty-messages');
-      if (empty) empty.remove();
-
-      const lastMessage = messages.querySelector('.session-message:last-child');
-      if (lastMessage && lastMessage.classList.contains('role-thinking')) {
-        lastMessage.remove();
-      }
-
+    const renderMessageElement = (message) => {
       const article = document.createElement('article');
       const roleClass = message.kind === 'thinking'
         ? 'role-thinking'
@@ -340,16 +345,38 @@ ${messageRenderingScript}
       qcodeMessageRendering.renderMessageTextElement(text, message);
 
       article.append(text);
-      messages.append(article);
+      return article;
+    };
+    const appendMessage = (message) => {
+      if (!messages) return false;
+
+      const empty = messages.querySelector('.empty-messages');
+      if (empty) empty.remove();
+
+      const wasThinkingUpdate = isThinkingMessage(renderedMessages[renderedMessages.length - 1]) && isThinkingMessage(message);
+      const lastMessage = messages.querySelector('.session-message:last-child');
+      if (lastMessage && lastMessage.classList.contains('role-thinking')) {
+        lastMessage.remove();
+      }
+      if (isThinkingMessage(renderedMessages[renderedMessages.length - 1])) {
+        renderedMessages.pop();
+      }
+
+      messages.append(renderMessageElement(message));
+      renderedMessages.push(message);
+      return !wasThinkingUpdate;
     };
     const replaceMessages = (newMessages) => {
-      if (!messages) return;
+      if (!messages) return false;
+      const shouldScroll = shouldScrollForReplacement(newMessages);
       messages.replaceChildren();
+      renderedMessages.splice(0, renderedMessages.length, ...newMessages);
       if (!newMessages.length) {
         renderEmptyMessages();
-        return;
+        return false;
       }
-      newMessages.forEach(appendMessage);
+      newMessages.forEach((message) => messages.append(renderMessageElement(message)));
+      return shouldScroll;
     };
     const formatTokens = (value) => {
       const numberValue = Number(value || 0);
@@ -629,16 +656,16 @@ ${messageRenderingScript}
 
       if (data.command === 'sessionFileReady') {
         form.dataset.filePath = data.filePath || '';
-        replaceMessages(Array.isArray(data.messages) ? data.messages : []);
+        const shouldScroll = replaceMessages(Array.isArray(data.messages) ? data.messages : []);
         updateContextUsage(data.contextUsage);
-        requestAnimationFrame(scrollLastMessageTop);
+        if (shouldScroll) requestAnimationFrame(scrollLastMessageTop);
         return;
       }
 
       if (data.command === 'replaceMessages' && Array.isArray(data.messages)) {
-        replaceMessages(data.messages);
+        const shouldScroll = replaceMessages(data.messages);
         updateContextUsage(data.contextUsage);
-        requestAnimationFrame(scrollLastMessageTop);
+        if (shouldScroll) requestAnimationFrame(scrollLastMessageTop);
         return;
       }
 
@@ -654,8 +681,11 @@ ${messageRenderingScript}
         return;
       }
 
-      data.messages.forEach(appendMessage);
-      requestAnimationFrame(scrollLastMessageTop);
+      let shouldScroll = false;
+      data.messages.forEach((message) => {
+        shouldScroll = appendMessage(message) || shouldScroll;
+      });
+      if (shouldScroll) requestAnimationFrame(scrollLastMessageTop);
     });
     vscode.postMessage({ command: 'ready' });
     form.addEventListener('submit', (event) => {
@@ -672,8 +702,9 @@ ${messageRenderingScript}
         providerCliArgs,
       });
       removeDraftProviderOptions();
-      appendMessage({ role: 'user', kind: 'message', text: sentText });
-      requestAnimationFrame(scrollLastMessageTop);
+      if (appendMessage({ role: 'user', kind: 'message', text: sentText })) {
+        requestAnimationFrame(scrollLastMessageTop);
+      }
       input.value = '';
       resizeInput();
       input.focus();
