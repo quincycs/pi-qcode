@@ -156,9 +156,7 @@ export const messageRenderingScript = String.raw`
       };
       const renderFormattedText = (text) => escapeHtml(text)
         .replace(/\*\*([^*\n][\s\S]*?[^*\n])\*\*/g, '<strong>$1</strong>')
-        .replace(/__([^_\n][\s\S]*?[^_\n])__/g, '<strong>$1</strong>')
-        .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
-        .replace(/_([^_\n]+)_/g, '<em>$1</em>');
+        .replace(/__([^_\n][\s\S]*?[^_\n])__/g, '<strong>$1</strong>');
       const renderPlainSegment = (segment) => {
         let html = '';
         let lastIndex = 0;
