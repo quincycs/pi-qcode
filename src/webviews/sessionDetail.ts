@@ -178,7 +178,7 @@ ${messageRenderingStyles}
   .message-input {
     min-width: 0;
     min-height: 26px;
-    max-height: calc(1.35em * 10 + 10px);
+    max-height: calc(1.35em * 22 + 10px);
     flex: 1 1 auto;
     padding: 4px 6px;
     overflow-y: auto;
