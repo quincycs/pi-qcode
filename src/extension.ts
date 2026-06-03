@@ -38,6 +38,7 @@ type WebviewMessage =
   | { command: "confirmDeleteProviderOption"; index?: number; label?: string }
   | { command: "saveLastUsedProvider"; nickname?: string }
   | { command: "sendMessage"; filePath?: string; text?: string; providerCliArgs?: string }
+  | { command: "copyToClipboard"; text?: string }
   | { command: "openFileReference"; value?: string }
   | { command: "openExternalUrl"; value?: string }
   | { command: "resolveFileReferences"; requestId?: number; values?: unknown }
@@ -169,6 +170,12 @@ export function activate(context: vscode.ExtensionContext): void {
           if (result.sessionFilePath) {
             attachSessionFileToCurrentDetail(result.sessionFilePath);
           }
+        };
+
+        const handleCopyToClipboard = async (
+          message: Extract<WebviewMessage, { command: "copyToClipboard" }>,
+        ) => {
+          await vscode.env.clipboard.writeText(String(message.text || ""));
         };
 
         const handleOpenFileReference = async (
@@ -347,6 +354,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (message.command === "sendMessage") {
             void handleSendMessage(message);
+          }
+
+          if (message.command === "copyToClipboard") {
+            void handleCopyToClipboard(message);
           }
 
           if (message.command === "openFileReference") {

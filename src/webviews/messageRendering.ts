@@ -93,6 +93,40 @@ export const messageRenderingStyles = String.raw`
   .message-text .file-reference {
     cursor: pointer;
   }
+  .qcode-context-menu[hidden] {
+    display: none !important;
+  }
+  .qcode-context-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 132px;
+    padding: 4px;
+    color: var(--vscode-menu-foreground, var(--vscode-foreground));
+    background: var(--vscode-menu-background, var(--vscode-editorWidget-background, var(--vscode-input-background)));
+    border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, transparent));
+    border-radius: 4px;
+    box-shadow: 0 3px 8px rgb(0 0 0 / 28%);
+  }
+  .qcode-context-menu-button {
+    display: block;
+    width: 100%;
+    padding: 5px 22px 5px 8px;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+    line-height: 1.35;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .qcode-context-menu-button:hover,
+  .qcode-context-menu-button:focus {
+    color: var(--vscode-menu-selectionForeground, var(--vscode-list-activeSelectionForeground, var(--vscode-foreground)));
+    background: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground)));
+    outline: none;
+  }
 `;
 
 export const messageRenderingScript = String.raw`
@@ -392,6 +426,68 @@ export const messageRenderingScript = String.raw`
           });
         });
       };
+      const getEventElement = (event) => {
+        const target = event.target;
+        if (target instanceof Element) return target;
+        if (target instanceof Node) return target.parentElement;
+        return null;
+      };
+      const getSelectedPageText = () => {
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed) return '';
+        return selection.toString();
+      };
+      const getRawMessageText = (messageElement) => {
+        const textElement = messageElement && messageElement.querySelector('.message-text');
+        if (!textElement) return '';
+        return textElement.dataset.messageText ?? textElement.textContent ?? '';
+      };
+      let contextMenuCopyText = '';
+      const ensureContextMenu = (vscode) => {
+        let menu = document.querySelector('.qcode-context-menu');
+        if (menu) return menu;
+
+        menu = document.createElement('div');
+        menu.className = 'qcode-context-menu';
+        menu.hidden = true;
+        menu.setAttribute('role', 'menu');
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'qcode-context-menu-button';
+        button.setAttribute('role', 'menuitem');
+        button.addEventListener('click', () => {
+          const text = contextMenuCopyText;
+          contextMenuCopyText = '';
+          menu.hidden = true;
+          vscode.postMessage({ command: 'copyToClipboard', text });
+        });
+
+        menu.append(button);
+        document.body.append(menu);
+        return menu;
+      };
+      const showContextMenu = (vscode, label, text, clientX, clientY) => {
+        const menu = ensureContextMenu(vscode);
+        const button = menu.querySelector('.qcode-context-menu-button');
+        button.textContent = label;
+        contextMenuCopyText = String(text || '');
+        menu.hidden = false;
+        menu.style.left = clientX + 'px';
+        menu.style.top = clientY + 'px';
+
+        const rect = menu.getBoundingClientRect();
+        const padding = 4;
+        const left = Math.max(padding, Math.min(clientX, window.innerWidth - rect.width - padding));
+        const top = Math.max(padding, Math.min(clientY, window.innerHeight - rect.height - padding));
+        menu.style.left = left + 'px';
+        menu.style.top = top + 'px';
+        button.focus();
+      };
+      const hideContextMenu = () => {
+        const menu = document.querySelector('.qcode-context-menu');
+        if (menu) menu.hidden = true;
+      };
       const installClickHandlers = (vscode) => {
         vscodeApi = vscode;
         window.addEventListener('message', (event) => {
@@ -406,8 +502,35 @@ export const messageRenderingScript = String.raw`
           if (changed) renderExistingMessages();
         });
         flushFileReferenceChecks();
+        document.addEventListener('contextmenu', (event) => {
+          const target = getEventElement(event);
+          if (target && target.closest('.qcode-context-menu')) return;
+
+          const selectedText = getSelectedPageText();
+          if (selectedText) {
+            event.preventDefault();
+            showContextMenu(vscode, 'Copy', selectedText, event.clientX, event.clientY);
+            return;
+          }
+
+          const messageElement = target && target.closest('.session-message');
+          if (!messageElement) {
+            hideContextMenu();
+            return;
+          }
+
+          event.preventDefault();
+          showContextMenu(vscode, 'Copy message', getRawMessageText(messageElement), event.clientX, event.clientY);
+        });
+        document.addEventListener('scroll', hideContextMenu, true);
+        window.addEventListener('blur', hideContextMenu);
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') hideContextMenu();
+        });
         document.addEventListener('click', (event) => {
-          const target = event.target instanceof Element ? event.target : null;
+          const target = getEventElement(event);
+          if (!target || !target.closest('.qcode-context-menu')) hideContextMenu();
+
           const fileReference = target && target.closest('a[data-file-reference]');
           if (fileReference) {
             event.preventDefault();
