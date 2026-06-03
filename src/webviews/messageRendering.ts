@@ -66,9 +66,8 @@ export const messageRenderingStyles = String.raw`
     font-size: inherit;
   }
   .message-text table {
-    display: block;
-    max-width: 100%;
-    overflow-x: auto;
+    width: 100%;
+    table-layout: fixed;
     border-collapse: collapse;
     border-spacing: 0;
   }
@@ -76,6 +75,8 @@ export const messageRenderingStyles = String.raw`
   .message-text td {
     padding: 4px 8px;
     border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, transparent));
+    overflow-wrap: anywhere;
+    word-break: break-word;
     text-align: left;
     vertical-align: top;
   }
