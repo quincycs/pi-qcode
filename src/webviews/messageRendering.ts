@@ -17,6 +17,7 @@ export const messageRenderingStyles = String.raw`
   .message-text ol,
   .message-text blockquote,
   .message-text pre,
+  .message-text table,
   .message-text h1,
   .message-text h2,
   .message-text h3,
@@ -63,6 +64,24 @@ export const messageRenderingStyles = String.raw`
     background: transparent;
     border-radius: 0;
     font-size: inherit;
+  }
+  .message-text table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    border-spacing: 0;
+  }
+  .message-text th,
+  .message-text td {
+    padding: 4px 8px;
+    border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, transparent));
+    text-align: left;
+    vertical-align: top;
+  }
+  .message-text th {
+    font-weight: 600;
+    background: var(--vscode-editorWidget-background, transparent);
   }
   .message-text a {
     color: var(--vscode-textLink-foreground);
@@ -231,7 +250,46 @@ export const messageRenderingScript = String.raw`
           codeLines = [];
           fenceLanguage = '';
         };
-        for (const line of lines) {
+        const parseTableRow = (line) => {
+          const trimmed = String(line || '').trim();
+          if (!trimmed.includes('|')) return null;
+          const content = trimmed.replace(/^\|/, '').replace(/\|$/, '');
+          const cells = [];
+          let cell = '';
+          let escaped = false;
+          for (const character of content) {
+            if (character === '|' && !escaped) {
+              cells.push(cell.trim().replace(/\\\|/g, '|'));
+              cell = '';
+            } else {
+              cell += character;
+            }
+            escaped = character === '\\' && !escaped;
+          }
+          cells.push(cell.trim().replace(/\\\|/g, '|'));
+          return cells.length > 1 ? cells : null;
+        };
+        const isTableSeparator = (line) => {
+          const cells = parseTableRow(line);
+          return Boolean(cells && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim())));
+        };
+        const normalizeTableRow = (row, columnCount) => {
+          const cells = row.slice(0, columnCount);
+          while (cells.length < columnCount) cells.push('');
+          return cells;
+        };
+        const renderTable = (header, rows) => {
+          const columnCount = header.length;
+          const headerHtml = normalizeTableRow(header, columnCount)
+            .map((cell) => '<th>' + renderInlineMarkdown(cell) + '</th>')
+            .join('');
+          const bodyHtml = rows
+            .map((row) => '<tr>' + normalizeTableRow(row, columnCount).map((cell) => '<td>' + renderInlineMarkdown(cell) + '</td>').join('') + '</tr>')
+            .join('');
+          return '<table><thead><tr>' + headerHtml + '</tr></thead>' + (bodyHtml ? '<tbody>' + bodyHtml + '</tbody>' : '') + '</table>';
+        };
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+          const line = lines[lineIndex];
           const fenceMatch = line.match(/^\`\`\`\s*([^\`]*)$/);
           if (fenceMatch) {
             if (inFence) {
@@ -252,6 +310,24 @@ export const messageRenderingScript = String.raw`
           if (!line.trim()) {
             flushParagraph();
             flushList();
+            continue;
+          }
+          const tableHeader = parseTableRow(line);
+          if (tableHeader && isTableSeparator(lines[lineIndex + 1])) {
+            const rows = [];
+            flushParagraph();
+            flushList();
+            lineIndex += 2;
+            while (lineIndex < lines.length) {
+              const row = parseTableRow(lines[lineIndex]);
+              if (!row || isTableSeparator(lines[lineIndex])) {
+                lineIndex -= 1;
+                break;
+              }
+              rows.push(row);
+              lineIndex += 1;
+            }
+            html += renderTable(tableHeader, rows);
             continue;
           }
           const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
