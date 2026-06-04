@@ -295,8 +295,12 @@ ${messageRenderingStyles}
 
     const resizeInput = () => {
       input.style.height = 'auto';
-      const maxHeight = Number.parseFloat(getComputedStyle(input).maxHeight);
-      input.style.height = Math.min(input.scrollHeight, maxHeight) + 'px';
+      const styles = getComputedStyle(input);
+      const maxHeight = Number.parseFloat(styles.maxHeight);
+      const borderHeight = Number.parseFloat(styles.borderTopWidth) + Number.parseFloat(styles.borderBottomWidth);
+      const nextHeight = Math.min(input.scrollHeight + borderHeight, maxHeight);
+      input.style.height = nextHeight + 'px';
+      input.style.overflowY = input.scrollHeight + borderHeight > maxHeight ? 'auto' : 'hidden';
     };
     const scrollLastMessageTop = () => {
       const lastMessage = messages && messages.querySelector('.session-message:last-child');
