@@ -63,7 +63,6 @@ export async function sendSessionMessage(
   const terminal = createSessionTerminal();
   messageSessions.set(resolvedFilePath, { guid, terminal });
 
-  terminal.show();
   terminal.sendText(buildSessionMessageCommand(resolvedFilePath, guid, text));
   return {};
 }
@@ -85,7 +84,6 @@ async function startNewSessionMessage(
   const guid = crypto.randomUUID();
   const terminal = createSessionTerminal();
 
-  terminal.show();
   terminal.sendText(buildNewSessionMessageCommand(guid, text, providerCliArgs));
 
   const sessionFilePath = await waitForNewSessionFile(cwd, before);
