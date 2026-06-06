@@ -14,7 +14,6 @@ export const messageRenderingStyles = String.raw`
   }
   .message-text p,
   .message-text ul,
-  .message-text ol,
   .message-text blockquote,
   .message-text pre,
   .message-text table,
@@ -35,8 +34,7 @@ export const messageRenderingStyles = String.raw`
   .message-text p {
     white-space: pre-wrap;
   }
-  .message-text ul,
-  .message-text ol {
+  .message-text ul {
     padding-left: 1.7em;
   }
   .message-text blockquote {
@@ -258,13 +256,12 @@ export const messageRenderingScript = String.raw`
         html += renderPlainSegment(text.slice(lastIndex));
         return html;
       };
-      const renderListItems = (items, tag) => '<' + tag + '>' + items.map((item) => '<li>' + renderInlineMarkdown(item) + '</li>').join('') + '</' + tag + '>';
+      const renderListItems = (items) => '<ul>' + items.map((item) => '<li>' + renderInlineMarkdown(item) + '</li>').join('') + '</ul>';
       const renderMarkdown = (markdown) => {
         const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
         let html = '';
         let paragraph = [];
         let listItems = [];
-        let listTag = '';
         let inFence = false;
         let fenceLanguage = '';
         let codeLines = [];
@@ -275,9 +272,8 @@ export const messageRenderingScript = String.raw`
         };
         const flushList = () => {
           if (!listItems.length) return;
-          html += renderListItems(listItems, listTag || 'ul');
+          html += renderListItems(listItems);
           listItems = [];
-          listTag = '';
         };
         const flushCode = () => {
           const languageClass = fenceLanguage ? ' class="language-' + escapeAttribute(fenceLanguage) + '"' : '';
@@ -374,13 +370,9 @@ export const messageRenderingScript = String.raw`
             continue;
           }
           const unorderedMatch = line.match(/^\s*[-*+]\s+(.+)$/);
-          const orderedMatch = line.match(/^\s*\d+[.)]\s+(.+)$/);
-          if (unorderedMatch || orderedMatch) {
+          if (unorderedMatch) {
             flushParagraph();
-            const nextTag = unorderedMatch ? 'ul' : 'ol';
-            if (listTag && listTag !== nextTag) flushList();
-            listTag = nextTag;
-            listItems.push((unorderedMatch || orderedMatch)[1]);
+            listItems.push(unorderedMatch[1]);
             continue;
           }
           const quoteMatch = line.match(/^>\s?(.*)$/);
