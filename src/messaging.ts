@@ -177,12 +177,35 @@ function buildNewSessionMessageCommand(
   message: string,
   providerCliArgs: string,
 ): string {
+  const providerArgs = splitCliArgs(providerCliArgs);
+
   return [
-    "pi",
-    ...splitCliArgs(providerCliArgs).map(shellEscape),
+    ...buildPiCommandPrefix(providerArgs),
+    ...providerArgs.map(shellEscape),
     shellEscape(`/msg-on ${guid}`),
     shellEscape(normalizeMessageArgument(message)),
   ].join(" ");
+}
+
+function buildPiCommandPrefix(providerArgs: string[]): string[] {
+  return usesOpenAiCodexModelProvider(providerArgs)
+    ? ['PI_CACHE_RETENTION="long"', "pi"]
+    : ["pi"];
+}
+
+function usesOpenAiCodexModelProvider(providerArgs: string[]): boolean {
+  for (let index = 0; index < providerArgs.length; index += 1) {
+    const arg = providerArgs[index];
+    if (arg === "--model") {
+      const model = providerArgs[index + 1];
+      if (model?.startsWith("openai-codex/")) return true;
+      continue;
+    }
+
+    if (arg.startsWith("--model=openai-codex/")) return true;
+  }
+
+  return false;
 }
 
 function normalizeMessageArgument(message: string): string {
