@@ -547,7 +547,7 @@ function readRenderableSessionMessage(entry: Record<string, unknown>): SessionMe
   const message = messageEntry as Record<string, unknown>;
   const role = String(message.role || "message");
   const errorMessage = role === "assistant" ? readAssistantErrorMessage(message, entry) : "";
-  if (role !== "user" && !errorMessage && !hasFinalPhase(entry)) return null;
+  if (role !== "user" && !errorMessage && !isCompleteAssistantMessage(message, entry)) return null;
 
   const text = errorMessage || readText(message.content, {
     collapseSkillContent: role === "user",
@@ -559,6 +559,29 @@ function readRenderableSessionMessage(entry: Record<string, unknown>): SessionMe
     text,
     kind: "message",
   };
+}
+
+// An assistant message is considered complete if any provider signal indicates it finished
+// successfully. Different providers/versions use different conventions, so we check all
+// known signals additively — any one match is sufficient.
+function isCompleteAssistantMessage(
+  message: Record<string, unknown>,
+  entry: Record<string, unknown>,
+): boolean {
+  // Convention 1 (openai / some providers): a `phase` field set to "final" or "final_answer"
+  // somewhere in the entry tree.
+  if (hasFinalPhase(entry)) return true;
+
+  // Convention 2 (openrouter / most providers): a `stopReason` field is present (any value means the
+  // message is complete — error/aborted are still worth showing).
+  const stopReason = typeof message.stopReason === "string"
+    ? message.stopReason
+    : typeof entry.stopReason === "string"
+      ? entry.stopReason
+      : "";
+  if (stopReason) return true;
+
+  return false;
 }
 
 function readAssistantErrorMessage(
