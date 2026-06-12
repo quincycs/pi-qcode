@@ -1,5 +1,5 @@
 create a bare minimal vscode extension taking inspiration from
-/Users/qmitchell/proj/PiDE_Piper_VSCode_Extention
+<redacted>
 
 i'd like the installation steps to be:
 
