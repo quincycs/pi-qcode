@@ -61,13 +61,20 @@ export interface SessionFileSnapshot {
   createdAtMs: number;
 }
 
+interface SessionFileCandidate {
+  filePath: string;
+  mtimeMs: number;
+}
+
+const RECENT_SESSION_LIMIT = 50;
+
 export function getRecentSessions(workspaceCwd?: string): RecentSession[] {
-  return getSessionFiles()
-    .map(parseSessionFile)
+  return getRecentSessionFileCandidates(workspaceCwd)
+    .slice(0, RECENT_SESSION_LIMIT)
+    .map((candidate) => parseSessionFile(candidate.filePath))
     .filter((session): session is RecentSession => Boolean(session))
-    .filter((session) => !workspaceCwd || isSameCwd(session.cwd, workspaceCwd))
     .sort((a, b) => b.lastActiveAt.getTime() - a.lastActiveAt.getTime())
-    .slice(0, 50);
+    .slice(0, RECENT_SESSION_LIMIT);
 }
 
 export function readSessionDetail(filePath: string): SessionDetail {
@@ -253,13 +260,11 @@ function calculateUsageTokens(usage: UsageRecord): number {
 }
 
 function getSessionFolderName(cwd: string): string {
-  const translatedCwd = cwd.replace(/^[\\/]+/, "").replace(/[\\/]+/g, "-");
+  const translatedCwd = path
+    .resolve(cwd)
+    .replace(/^[\\/]/, "")
+    .replace(/[\\/:]/g, "-");
   return `--${translatedCwd}--`;
-}
-
-function isSameCwd(sessionCwd: string, workspaceCwd: string): boolean {
-  if (!sessionCwd) return false;
-  return path.resolve(sessionCwd) === path.resolve(workspaceCwd);
 }
 
 function snapshotSessionFile(filePath: string): SessionFileSnapshot | undefined {
@@ -274,13 +279,23 @@ function snapshotSessionFile(filePath: string): SessionFileSnapshot | undefined 
   }
 }
 
-function getSessionFiles(): string[] {
-  const files: string[] = [];
+function getRecentSessionFileCandidates(
+  workspaceCwd?: string,
+): SessionFileCandidate[] {
+  const candidates = workspaceCwd
+    ? listSessionFileCandidatesInDir(getSessionFolderForCwd(workspaceCwd))
+    : getAllSessionFileCandidates();
+
+  return candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+function getAllSessionFileCandidates(): SessionFileCandidate[] {
+  const files: SessionFileCandidate[] = [];
   walk(getSessionsDir(), files);
   return files;
 }
 
-function walk(dir: string, files: string[]): void {
+function walk(dir: string, files: SessionFileCandidate[]): void {
   if (!fs.existsSync(dir)) return;
 
   let entries: fs.Dirent[];
@@ -293,7 +308,38 @@ function walk(dir: string, files: string[]): void {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) walk(fullPath, files);
-    else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(fullPath);
+    else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      const candidate = readSessionFileCandidate(fullPath);
+      if (candidate) files.push(candidate);
+    }
+  }
+}
+
+function listSessionFileCandidatesInDir(dir: string): SessionFileCandidate[] {
+  if (!fs.existsSync(dir)) return [];
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+    .map((entry) => readSessionFileCandidate(path.join(dir, entry.name)))
+    .filter((candidate): candidate is SessionFileCandidate => Boolean(candidate));
+}
+
+function readSessionFileCandidate(filePath: string): SessionFileCandidate | undefined {
+  try {
+    const stat = fs.statSync(filePath);
+    return {
+      filePath,
+      mtimeMs: stat.mtimeMs,
+    };
+  } catch {
+    return undefined;
   }
 }
 
