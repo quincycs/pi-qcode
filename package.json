@@ -2,7 +2,7 @@
   "name": "pi-qcode",
   "displayName": "pi-qcode",
   "description": "Native UI vscode extension for pi coding agent. UI is powered by the pi cli in the terminal window. See Prerequisites for details.",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "publisher": "QuincyMitchell",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -37,7 +37,7 @@
         {
           "type": "webview",
           "id": "pi-qcode.home",
-          "name": "v0.0.11"
+          "name": "v0.0.12"
         }
       ]
     },
@@ -86,7 +86,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc --project tsconfig.json",
     "watch": "tsc --watch --project tsconfig.json",
-    "package-install": "npm run compile && vsce package --allow-missing-repository --out pi-qcode-0.0.11.vsix && code --install-extension pi-qcode-0.0.11.vsix --force",
+    "package-install": "npm run compile && vsce package --allow-missing-repository --out pi-qcode-0.0.12.vsix && code --install-extension pi-qcode-0.0.12.vsix --force",
     "package-uninstall": "code --uninstall-extension QuincyMitchell.pi-qcode"
   },
   "devDependencies": {
