@@ -93,6 +93,12 @@ export function renderSessionDetail(
   .context-usage-value {
     flex: 0 0 auto;
   }
+  .context-usage-percent-warning {
+    color: var(--vscode-charts-yellow, #cca700);
+  }
+  .context-usage-percent-danger {
+    color: var(--vscode-charts-red, var(--vscode-errorForeground, #f14c4c));
+  }
   .body {
     flex: 1 1 auto;
     min-height: 0;
@@ -394,6 +400,11 @@ ${messageRenderingScript}
       if (!Number.isFinite(numberValue) || numberValue <= 0) return '';
       return '$' + numberValue.toFixed(numberValue < 0.01 ? 4 : numberValue < 1 ? 3 : 2);
     };
+    const getContextUsageColorClass = (percent) => {
+      if (!Number.isFinite(percent) || percent < 30) return '';
+      if (percent < 40) return ' context-usage-percent-warning';
+      return ' context-usage-percent-danger';
+    };
     const updateContextUsage = (usage) => {
       if (!contextUsage) return;
 
@@ -415,7 +426,7 @@ ${messageRenderingScript}
       if (hasPercent) {
         const title = 'Context window used: ' + rawPercent.toFixed(1) + '% (' + formatTokens(used) + ' / ' + formatTokens(total) + ' tokens' + detailSuffix + ')';
         const percentElement = document.createElement('span');
-        percentElement.className = 'context-usage-value';
+        percentElement.className = 'context-usage-value' + getContextUsageColorClass(rawPercent);
         percentElement.textContent = rawPercent.toFixed(1) + '%';
         contextUsage.replaceChildren(percentElement);
         if (cost) {
