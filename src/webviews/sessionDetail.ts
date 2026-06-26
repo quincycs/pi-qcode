@@ -16,17 +16,21 @@ export function renderSessionDetail(
     initialInput?: string;
     providerOptions?: ProviderOption[];
     lastUsedProviderNickname?: string;
+    assistantSoundEnabled?: boolean;
+    assistantSoundUri?: string;
+    cspSource?: string;
   } = {},
 ): string {
   const isDraftSession = !filePath && !session.filePath && !session.error;
   const providerOptions = options.providerOptions ?? [];
   const lastUsedProviderNickname = options.lastUsedProviderNickname ?? "";
+  const resourceCspSource = options.cspSource || "'none'";
 
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; form-action 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; connect-src ${resourceCspSource}; media-src ${resourceCspSource}; form-action 'none';">
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   body {
@@ -337,6 +341,70 @@ ${messageRenderingStyles}
       sessionWarning.setAttribute('aria-label', title);
     };
 
+    const assistantSoundEnabled = ${options.assistantSoundEnabled === true ? "true" : "false"};
+    const assistantSoundUri = ${toScriptString(options.assistantSoundUri ?? "")};
+    let notificationAudioContext = null;
+    let notificationAudioBufferPromise = null;
+    const getNotificationAudioContext = () => {
+      if (!assistantSoundEnabled || !assistantSoundUri) return null;
+      if (notificationAudioContext) return notificationAudioContext;
+      const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextConstructor) return null;
+      notificationAudioContext = new AudioContextConstructor();
+      return notificationAudioContext;
+    };
+    const loadNotificationAudioBuffer = () => {
+      const audioContext = getNotificationAudioContext();
+      if (!audioContext) return Promise.resolve(null);
+      if (notificationAudioBufferPromise) return notificationAudioBufferPromise;
+
+      notificationAudioBufferPromise = fetch(assistantSoundUri)
+        .then((response) => {
+          if (!response.ok) throw new Error('Unable to load notification sound.');
+          return response.arrayBuffer();
+        })
+        .then((arrayBuffer) => audioContext.decodeAudioData(arrayBuffer))
+        .catch(() => null);
+      return notificationAudioBufferPromise;
+    };
+    const unlockNotificationAudio = () => {
+      if (!assistantSoundEnabled) return;
+      const audioContext = getNotificationAudioContext();
+      if (!audioContext) return;
+      if (audioContext.state === 'suspended') {
+        audioContext.resume().catch(() => {});
+      }
+      loadNotificationAudioBuffer();
+    };
+    const playAssistantMessageSound = () => {
+      if (!assistantSoundEnabled) return;
+      const audioContext = getNotificationAudioContext();
+      if (!audioContext) return;
+
+      const play = (audioBuffer) => {
+        if (!audioBuffer) return;
+        try {
+          const source = audioContext.createBufferSource();
+          const gain = audioContext.createGain();
+          source.buffer = audioBuffer;
+          gain.gain.value = 0.8;
+          source.connect(gain);
+          gain.connect(audioContext.destination);
+          source.start();
+        } catch {
+          // Ignore audio failures; the message should still render normally.
+        }
+      };
+
+      const loadAndPlay = () => loadNotificationAudioBuffer().then(play).catch(() => {});
+      if (audioContext.state === 'suspended') {
+        audioContext.resume().then(loadAndPlay).catch(() => {});
+        return;
+      }
+
+      loadAndPlay();
+    };
+
     const resizeInput = () => {
       input.style.height = 'auto';
       const styles = getComputedStyle(input);
@@ -359,6 +427,10 @@ ${messageRenderingStyles}
     };
     const renderedMessages = ${toScriptJson(session.messages)};
     const isThinkingMessage = (message) => Boolean(message && message.kind === 'thinking');
+    const isAssistantMessage = (message) => Boolean(message && message.kind !== 'thinking' && message.role === 'assistant');
+    const countAssistantMessages = (messageList) => Array.isArray(messageList)
+      ? messageList.filter(isAssistantMessage).length
+      : 0;
     const messageRenderSlot = (message) => {
       if (!message) return '';
       return (message.kind || 'message') + ':' + (message.role || '');
@@ -412,11 +484,13 @@ ${messageRenderingScript}
 
       messages.append(renderMessageElement(message));
       renderedMessages.push(message);
+      if (isAssistantMessage(message)) playAssistantMessageSound();
       return !wasThinkingUpdate;
     };
     const replaceMessages = (newMessages) => {
       if (!messages) return false;
       const shouldScroll = shouldScrollForReplacement(newMessages);
+      const previousAssistantMessageCount = countAssistantMessages(renderedMessages);
       messages.replaceChildren();
       renderedMessages.splice(0, renderedMessages.length, ...newMessages);
       if (!newMessages.length) {
@@ -424,6 +498,9 @@ ${messageRenderingScript}
         return false;
       }
       newMessages.forEach((message) => messages.append(renderMessageElement(message)));
+      if (countAssistantMessages(newMessages) > previousAssistantMessageCount) {
+        playAssistantMessageSound();
+      }
       return shouldScroll;
     };
     const formatTokens = (value) => {
@@ -632,6 +709,9 @@ ${messageRenderingScript}
     };
     const initialInput = ${toScriptString(options.initialInput ?? "")};
     qcodeMessageRendering.installClickHandlers(vscode);
+    ['pointerdown', 'keydown', 'touchstart'].forEach((eventName) => {
+      window.addEventListener(eventName, unlockNotificationAudio, { once: true, passive: true });
+    });
     qcodeMessageRendering.renderExistingMessages();
     updateContextUsage(${toScriptJson(session.contextUsage)});
     updateSessionWarnings(${toScriptJson(session.warnings ?? [])});

@@ -1,3 +1,4 @@
+import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { searchFileSuggestions } from "./fileSuggestions";
@@ -11,6 +12,7 @@ import { sendSessionMessage, type MessageSessionMap } from "./messaging";
 import {
   getSettingsFilePath,
   readQcodeSettings,
+  type QcodeSettings,
   writeQcodeSettings,
 } from "./qcodeSettings";
 import type { SessionDetail, SessionWarning } from "./sessionFiles";
@@ -49,6 +51,28 @@ type WebviewMessage =
 export function activate(context: vscode.ExtensionContext): void {
   let addToActiveQcodeInput: (() => void) | undefined;
   let pendingInputText = "";
+  const defaultAssistantSoundUri = vscode.Uri.joinPath(
+    context.extensionUri,
+    "media",
+    "chime.wav",
+  );
+  const assistantSoundMediaRoot = vscode.Uri.joinPath(context.extensionUri, "media");
+  const defaultAssistantSoundPath = defaultAssistantSoundUri.fsPath;
+
+  const resolveAssistantSoundPath = (settings: QcodeSettings): string => {
+    const configuredPath = settings.assistantSoundPath.trim();
+    if (!configuredPath) return defaultAssistantSoundPath;
+
+    const expandedPath = configuredPath.startsWith("~/") || configuredPath.startsWith("~\\")
+      ? path.join(os.homedir(), configuredPath.slice(2))
+      : configuredPath === "~"
+        ? os.homedir()
+        : configuredPath;
+
+    if (path.isAbsolute(expandedPath)) return expandedPath;
+
+    return path.resolve(getWorkspaceCwd() ?? os.homedir(), expandedPath);
+  };
 
   const queueInputText = (text: string) => {
     pendingInputText = pendingInputText ? `${pendingInputText}\n${text}` : text;
@@ -90,7 +114,22 @@ export function activate(context: vscode.ExtensionContext): void {
         let detailWebviewReady = false;
         const messageSessions: MessageSessionMap = new Map();
 
-        view.webview.options = { enableScripts: true };
+        const configureWebviewOptions = (settings: QcodeSettings = readQcodeSettings()) => {
+          const soundPath = resolveAssistantSoundPath(settings);
+          const localResourceRoots = [assistantSoundMediaRoot];
+          if (soundPath !== defaultAssistantSoundPath) {
+            localResourceRoots.push(vscode.Uri.file(path.dirname(soundPath)));
+          }
+
+          view.webview.options = { enableScripts: true, localResourceRoots };
+        };
+        const getAssistantSoundWebviewUri = (settings: QcodeSettings): string => {
+          return view.webview.asWebviewUri(
+            vscode.Uri.file(resolveAssistantSoundPath(settings)),
+          ).toString();
+        };
+
+        configureWebviewOptions();
 
         const stopSessionWatcher = () => {
           if (!sessionWatcher) return;
@@ -101,6 +140,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const showHome = () => {
           stopSessionWatcher();
           detailWebviewReady = false;
+          configureWebviewOptions();
           currentRoute = { name: "home" };
           view.webview.html = renderHome(getNonce(), getWorkspaceCwd());
         };
@@ -108,11 +148,14 @@ export function activate(context: vscode.ExtensionContext): void {
         const showSettings = () => {
           stopSessionWatcher();
           detailWebviewReady = false;
+          const settings = readQcodeSettings();
+          configureWebviewOptions(settings);
           currentRoute = { name: "settings" };
           view.webview.html = renderSettings(
             getNonce(),
-            readQcodeSettings(),
+            settings,
             getSettingsFilePath(),
+            defaultAssistantSoundPath,
           );
         };
 
@@ -120,11 +163,18 @@ export function activate(context: vscode.ExtensionContext): void {
           stopSessionWatcher();
           detailWebviewReady = false;
           const session = readSessionDetail(filePath);
+          const settings = readQcodeSettings();
+          configureWebviewOptions(settings);
           currentRoute = { name: "sessionDetail", filePath };
           view.webview.html = renderSessionDetail(
             filePath,
             getNonce(),
             session,
+            {
+              assistantSoundEnabled: settings.assistantSoundEnabled,
+              assistantSoundUri: getAssistantSoundWebviewUri(settings),
+              cspSource: view.webview.cspSource,
+            },
           );
           sessionWatcher = watchSessionDetail(session, view.webview);
         };
@@ -134,11 +184,15 @@ export function activate(context: vscode.ExtensionContext): void {
           detailWebviewReady = false;
           const session: SessionDetail = { title: "New Session", messages: [] };
           const settings = readQcodeSettings();
+          configureWebviewOptions(settings);
           currentRoute = { name: "sessionDetail" };
           view.webview.html = renderSessionDetail("", getNonce(), session, {
             autoFocus: true,
             providerOptions: settings.providerOptions,
             lastUsedProviderNickname: settings.lastUsedProviderNickname,
+            assistantSoundEnabled: settings.assistantSoundEnabled,
+            assistantSoundUri: getAssistantSoundWebviewUri(settings),
+            cspSource: view.webview.cspSource,
           });
         };
 
@@ -253,6 +307,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ) => {
           try {
             const settings = await writeQcodeSettings(message.settings);
+            configureWebviewOptions(settings);
             await view.webview.postMessage({
               command: "settingsSaved",
               settings,

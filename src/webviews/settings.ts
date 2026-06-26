@@ -5,6 +5,7 @@ export function renderSettings(
   nonce: string,
   settings: QcodeSettings,
   settingsFilePath: string,
+  defaultAssistantSoundPath: string,
 ): string {
   return `<!doctype html>
 <html lang="en">
@@ -143,6 +144,49 @@ export function renderSettings(
     outline: 1px solid var(--vscode-focusBorder, #007acc);
     outline-offset: -1px;
   }
+  .setting-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px;
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-widget-border, transparent);
+    border-radius: 5px;
+    line-height: 1.4;
+  }
+  .setting-toggle input {
+    width: auto;
+    flex: 0 0 auto;
+    margin: 2px 0 0;
+  }
+  .setting-toggle-text {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .setting-toggle-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .setting-toggle-description {
+    display: block;
+    margin-top: 4px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+  }
+  .setting-field-label {
+    display: block;
+    margin: 10px 0 5px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .setting-field-description {
+    margin: 6px 0 0;
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+    line-height: 1.4;
+    word-break: break-all;
+  }
   .row-actions,
   .actions { display: flex; gap: 8px; }
   .row-actions { margin-top: 8px; flex-wrap: wrap; }
@@ -190,6 +234,18 @@ export function renderSettings(
         </div>
       </section>
 
+      <section class="settings-section" aria-labelledby="notification-options-title">
+        <h2 class="section-title" id="notification-options-title">Notifications</h2>
+        <label class="setting-toggle" for="assistant-sound-enabled">
+          <input type="checkbox" id="assistant-sound-enabled">
+          <span class="setting-toggle-text">
+            <span class="setting-toggle-label">Play sound when assistant finishes</span>
+            <span class="setting-toggle-description">Play a sound when a new assistant message is rendered.</span>
+          </span>
+        </label>
+        <div class="options" id="notification-options"></div>
+      </section>
+
       <div class="status" id="status" aria-live="polite"></div>
     </section>
   </main>
@@ -197,13 +253,19 @@ export function renderSettings(
     const vscode = acquireVsCodeApi();
     const providerOptionsContainer = document.getElementById('provider-options');
     const hashOptionsContainer = document.getElementById('hash-options');
+    const notificationOptionsContainer = document.getElementById('notification-options');
+    const assistantSoundEnabledInput = document.getElementById('assistant-sound-enabled');
     const status = document.getElementById('status');
     let providerOptions = ${toScriptJson(settings.providerOptions)};
     let hashOptions = ${toScriptJson(settings.hashAutocompleteOptions)};
     let lastUsedProviderNickname = ${toScriptJson(settings.lastUsedProviderNickname)};
+    let assistantSoundEnabled = ${settings.assistantSoundEnabled === true ? "true" : "false"};
+    let assistantSoundPath = ${toScriptJson(settings.assistantSoundPath)};
+    const defaultAssistantSoundPath = ${toScriptJson(defaultAssistantSoundPath)};
     let editing = null;
     let providerDraft = { nickname: '', cliArgs: '' };
     let hashDraft = { command: '', value: '' };
+    let assistantSoundPathDraft = '';
 
     const setStatus = (message, isError = false) => {
       status.textContent = message;
@@ -212,6 +274,7 @@ export function renderSettings(
     const resetDrafts = () => {
       providerDraft = { nickname: '', cliArgs: '' };
       hashDraft = { command: '', value: '' };
+      assistantSoundPathDraft = '';
     };
     const discardPendingEdit = () => {
       if (!editing) return true;
@@ -220,7 +283,7 @@ export function renderSettings(
       if (editing.isNew && editing.index >= 0) {
         if (editing.kind === 'provider') {
           providerOptions.splice(editing.index, 1);
-        } else {
+        } else if (editing.kind === 'hash') {
           hashOptions.splice(editing.index, 1);
         }
       }
@@ -245,12 +308,22 @@ export function renderSettings(
           providerOptions: collectProviderOptions(),
           hashAutocompleteOptions: collectHashOptions(),
           lastUsedProviderNickname,
+          assistantSoundEnabled,
+          assistantSoundPath,
         },
       });
     };
     const focusFirstEditInput = (kind) => {
-      const container = kind === 'provider' ? providerOptionsContainer : hashOptionsContainer;
-      const input = container.querySelector(kind === 'provider' ? '[data-nickname-input]' : '[data-command-input]');
+      const container = kind === 'provider'
+        ? providerOptionsContainer
+        : kind === 'hash'
+          ? hashOptionsContainer
+          : notificationOptionsContainer;
+      const input = container.querySelector(kind === 'provider'
+        ? '[data-nickname-input]'
+        : kind === 'hash'
+          ? '[data-command-input]'
+          : '[data-assistant-sound-path-input]');
       if (input) input.focus();
     };
     const beginProviderEdit = (index, isNew = false) => {
@@ -275,11 +348,18 @@ export function renderSettings(
       renderAll();
       focusFirstEditInput('hash');
     };
+    const beginAssistantSoundPathEdit = () => {
+      if (editing && editing.kind !== 'assistantSoundPath' && !discardPendingEdit()) return;
+      editing = { kind: 'assistantSoundPath', index: -1, isNew: false };
+      assistantSoundPathDraft = assistantSoundPath;
+      renderAll();
+      focusFirstEditInput('assistantSoundPath');
+    };
     const cancelEdit = () => {
       if (editing?.isNew && editing.index >= 0) {
         if (editing.kind === 'provider') {
           providerOptions.splice(editing.index, 1);
-        } else {
+        } else if (editing.kind === 'hash') {
           hashOptions.splice(editing.index, 1);
         }
       }
@@ -300,7 +380,7 @@ export function renderSettings(
         }
 
         providerOptions[editing.index] = { nickname, cliArgs };
-      } else {
+      } else if (editing.kind === 'hash') {
         const command = String(hashDraft.command || '').trim();
         const value = String(hashDraft.value || '');
         if (!command || !value) {
@@ -309,6 +389,8 @@ export function renderSettings(
         }
 
         hashOptions[editing.index] = { command, value };
+      } else if (editing.kind === 'assistantSoundPath') {
+        assistantSoundPath = String(assistantSoundPathDraft || '').trim();
       }
 
       persistSettings();
@@ -383,13 +465,17 @@ export function renderSettings(
       cancelButton.textContent = 'Cancel';
       cancelButton.addEventListener('click', cancelEdit);
 
-      const deleteButton = document.createElement('button');
-      deleteButton.type = 'button';
-      deleteButton.className = 'delete-button';
-      deleteButton.textContent = 'Delete';
-      deleteButton.addEventListener('click', onDelete);
+      actions.append(saveButton, cancelButton);
 
-      actions.append(saveButton, cancelButton, deleteButton);
+      if (onDelete) {
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'delete-button';
+        deleteButton.textContent = 'Delete';
+        deleteButton.addEventListener('click', onDelete);
+        actions.append(deleteButton);
+      }
+
       row.append(actions);
     };
     const renderProviderEditRow = (index) => {
@@ -458,6 +544,38 @@ export function renderSettings(
       appendEditActions(row, () => requestDeleteHashOption(index));
       hashOptionsContainer.append(row);
     };
+    const renderAssistantSoundPathEditRow = () => {
+      const row = document.createElement('div');
+      row.className = 'option-card option-edit';
+
+      const fields = document.createElement('div');
+      fields.className = 'edit-fields';
+
+      const soundPath = document.createElement('input');
+      soundPath.type = 'text';
+      soundPath.placeholder = defaultAssistantSoundPath;
+      soundPath.ariaLabel = 'Sound file path';
+      soundPath.dataset.assistantSoundPathInput = 'true';
+      soundPath.value = assistantSoundPathDraft;
+      soundPath.addEventListener('input', () => {
+        assistantSoundPathDraft = soundPath.value;
+        setStatus('Unsaved changes');
+      });
+      soundPath.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        saveEdit();
+      });
+
+      const description = document.createElement('p');
+      description.className = 'setting-field-description';
+      description.textContent = 'Use an absolute path, ~/ path, or workspace-relative path. Leave blank to use the bundled default.';
+
+      fields.append(soundPath, description);
+      row.append(fields);
+      appendEditActions(row);
+      notificationOptionsContainer.append(row);
+    };
     const renderProviderOptions = () => {
       providerOptionsContainer.replaceChildren();
       if (!providerOptions.length) {
@@ -508,13 +626,42 @@ export function renderSettings(
         }
       });
     };
+    const renderNotificationOptions = () => {
+      assistantSoundEnabledInput.checked = assistantSoundEnabled;
+      notificationOptionsContainer.replaceChildren();
+
+      if (editing?.kind === 'assistantSoundPath') {
+        renderAssistantSoundPathEditRow();
+        return;
+      }
+
+      const soundPathSubtitle = assistantSoundPath || defaultAssistantSoundPath;
+      renderDisplayRow(
+        notificationOptionsContainer,
+        'Sound file path',
+        soundPathSubtitle,
+        'Edit sound file path',
+        beginAssistantSoundPathEdit,
+      );
+    };
     const renderAll = () => {
+      renderNotificationOptions();
       renderProviderOptions();
       renderHashOptions();
     };
 
     document.getElementById('home-button').addEventListener('click', () => {
       vscode.postMessage({ command: 'home' });
+    });
+    assistantSoundEnabledInput.addEventListener('change', () => {
+      const nextAssistantSoundEnabled = Boolean(assistantSoundEnabledInput.checked);
+      if (editing && !discardPendingEdit()) {
+        assistantSoundEnabledInput.checked = assistantSoundEnabled;
+        return;
+      }
+
+      assistantSoundEnabled = nextAssistantSoundEnabled;
+      persistSettings();
     });
     document.getElementById('add-provider-button').addEventListener('click', () => {
       if (!discardPendingEdit()) return;
@@ -541,6 +688,10 @@ export function renderSettings(
           : [];
         lastUsedProviderNickname = typeof (data.settings && data.settings.lastUsedProviderNickname) === 'string'
           ? data.settings.lastUsedProviderNickname
+          : '';
+        assistantSoundEnabled = Boolean(data.settings && data.settings.assistantSoundEnabled === true);
+        assistantSoundPath = typeof (data.settings && data.settings.assistantSoundPath) === 'string'
+          ? data.settings.assistantSoundPath
           : '';
         editing = null;
         resetDrafts();

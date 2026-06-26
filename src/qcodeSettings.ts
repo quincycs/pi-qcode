@@ -16,6 +16,8 @@ export interface QcodeSettings {
   hashAutocompleteOptions: HashAutocompleteOption[];
   providerOptions: ProviderOption[];
   lastUsedProviderNickname: string;
+  assistantSoundEnabled: boolean;
+  assistantSoundPath: string;
 }
 
 const settingsDirectory = path.join(os.homedir(), ".pi", "qcode");
@@ -37,6 +39,8 @@ export function readQcodeSettings(): QcodeSettings {
       hashAutocompleteOptions: [],
       providerOptions: [],
       lastUsedProviderNickname: "",
+      assistantSoundEnabled: false,
+      assistantSoundPath: "",
     };
   }
 }
@@ -69,7 +73,19 @@ function normalizeSettings(value: unknown): QcodeSettings {
     ? record.lastUsedProviderNickname.trim()
     : "";
 
-  return { hashAutocompleteOptions, providerOptions, lastUsedProviderNickname };
+  const assistantSoundEnabled = record.assistantSoundEnabled === true;
+
+  const assistantSoundPath = typeof record.assistantSoundPath === "string"
+    ? record.assistantSoundPath.trim()
+    : "";
+
+  return {
+    hashAutocompleteOptions,
+    providerOptions,
+    lastUsedProviderNickname,
+    assistantSoundEnabled,
+    assistantSoundPath,
+  };
 }
 
 function normalizeHashAutocompleteOption(item: unknown): HashAutocompleteOption[] {
