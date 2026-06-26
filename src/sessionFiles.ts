@@ -35,10 +35,21 @@ export interface ContextUsage {
   sessionCost?: number;
 }
 
+export interface SessionWarning {
+  id: string;
+  title: string;
+  message: string;
+}
+
 interface SessionMessageState {
   lastRenderedWasUser: boolean;
   thinkingCounts: Record<string, number>;
   visibleMessages: SessionMessage[];
+  hasSeenLifecycleEntry: boolean;
+  compatibilityMode: boolean;
+  activeLifecycleRun: boolean;
+  pendingAssistantMessage?: SessionMessage;
+  pendingCompatibilityAssistantMessage?: SessionMessage;
   contextUsage?: ContextUsage;
   modelId?: string;
   provider?: string;
@@ -52,6 +63,7 @@ export interface SessionDetail {
   fileSize?: number;
   messages: SessionMessage[];
   contextUsage?: ContextUsage;
+  warnings?: SessionWarning[];
   messageState?: SessionMessageState;
   error?: string;
 }
@@ -103,6 +115,7 @@ export function readSessionDetail(filePath: string): SessionDetail {
       fileSize: Buffer.byteLength(content, "utf8"),
       messages: messageState.visibleMessages,
       contextUsage: messageState.contextUsage,
+      warnings: getSessionWarnings(messageState),
       messageState,
     };
   } catch {
@@ -126,8 +139,13 @@ export function watchSessionDetail(
     session.filePath,
     session.fileSize ?? 0,
     session.messageState ?? createEmptySessionMessageState(),
-    (messages, contextUsage) => {
-      webview.postMessage({ command: "replaceMessages", messages, contextUsage });
+    (messages, contextUsage, warnings) => {
+      webview.postMessage({
+        command: "replaceMessages",
+        messages,
+        contextUsage,
+        warnings,
+      });
     },
   );
 }
@@ -165,28 +183,6 @@ export function getNewestSessionFileForCwd(cwd: string): SessionFileSnapshot | u
     .map((entry) => snapshotSessionFile(path.join(sessionFolder, entry.name)))
     .filter((snapshot): snapshot is SessionFileSnapshot => Boolean(snapshot))
     .sort((a, b) => b.createdAtMs - a.createdAtMs)[0];
-}
-
-function hasFinalPhase(value: unknown): boolean {
-  if (typeof value === "string") {
-    if (!value.includes('"phase"')) return false;
-
-    try {
-      return hasFinalPhase(JSON.parse(value));
-    } catch {
-      return false;
-    }
-  }
-
-  if (!value || typeof value !== "object") return false;
-  if (Array.isArray(value)) return value.some(hasFinalPhase);
-
-  const record = value as Record<string, unknown>;
-  return (
-    record.phase === "final" ||
-    record.phase === "final_answer" ||
-    Object.values(record).some(hasFinalPhase)
-  );
 }
 
 interface UsageRecord {
@@ -426,6 +422,7 @@ function readSessionMessageState(content: string): SessionMessageState {
   for (const line of content.split(/\r\n|\r|\n/)) {
     updateSessionMessageState(state, line);
   }
+  finalizeSessionMessageState(state);
 
   return state;
 }
@@ -435,6 +432,11 @@ function createEmptySessionMessageState(): SessionMessageState {
     lastRenderedWasUser: false,
     thinkingCounts: {},
     visibleMessages: [],
+    hasSeenLifecycleEntry: false,
+    compatibilityMode: false,
+    activeLifecycleRun: false,
+    pendingAssistantMessage: undefined,
+    pendingCompatibilityAssistantMessage: undefined,
     contextUsage: undefined,
     modelId: undefined,
     provider: undefined,
@@ -448,15 +450,32 @@ function updateSessionMessageState(state: SessionMessageState, line: string): bo
   if (!entry) return false;
 
   const contextChanged = updateSessionContextUsage(state, entry);
+  const lifecycleEntry = readPiLifecycleEntry(entry);
+  if (lifecycleEntry) {
+    const compatibilityChanged = !state.hasSeenLifecycleEntry
+      ? finalizeCompatibilityAssistantMessage(state)
+      : false;
+    state.hasSeenLifecycleEntry = true;
+    return updateSessionLifecycleState(state, lifecycleEntry) || compatibilityChanged || contextChanged;
+  }
+
+  if (!state.hasSeenLifecycleEntry) {
+    return updateCompatibilitySessionMessageState(state, entry) || contextChanged;
+  }
+
+  if (state.activeLifecycleRun) {
+    const pendingAssistantMessage = readRenderableSessionMessage(entry, {
+      includeAssistant: true,
+    });
+    if (pendingAssistantMessage?.role === "assistant") {
+      state.pendingAssistantMessage = pendingAssistantMessage;
+      return contextChanged;
+    }
+  }
+
   const message = readRenderableSessionMessage(entry);
   if (message) {
-    removeThinkingMessage(state.visibleMessages);
-    state.visibleMessages.push(message);
-    state.lastRenderedWasUser = message.role === "user";
-    state.thinkingCounts = {};
-    if (state.lastRenderedWasUser) {
-      upsertThinkingMessage(state.visibleMessages, state.thinkingCounts);
-    }
+    appendVisibleSessionMessage(state, message);
     return true;
   }
 
@@ -464,6 +483,46 @@ function updateSessionMessageState(state: SessionMessageState, line: string): bo
 
   incrementThinkingCounts(state.thinkingCounts, getThinkingEntryCounts(entry));
   upsertThinkingMessage(state.visibleMessages, state.thinkingCounts);
+  return true;
+}
+
+function finalizeSessionMessageState(state: SessionMessageState): void {
+  if (!state.hasSeenLifecycleEntry) {
+    finalizeCompatibilityAssistantMessage(state);
+  }
+}
+
+function updateCompatibilitySessionMessageState(
+  state: SessionMessageState,
+  entry: Record<string, unknown>,
+): boolean {
+  const message = readRenderableSessionMessage(entry, { includeAssistant: true });
+  if (message) {
+    state.compatibilityMode = true;
+
+    if (message.role === "assistant") {
+      state.pendingCompatibilityAssistantMessage = message;
+      return false;
+    }
+
+    finalizeCompatibilityAssistantMessage(state);
+    appendVisibleSessionMessage(state, message);
+    return true;
+  }
+
+  if (!state.lastRenderedWasUser) return false;
+
+  incrementThinkingCounts(state.thinkingCounts, getThinkingEntryCounts(entry));
+  upsertThinkingMessage(state.visibleMessages, state.thinkingCounts);
+  return true;
+}
+
+function finalizeCompatibilityAssistantMessage(state: SessionMessageState): boolean {
+  const pendingMessage = state.pendingCompatibilityAssistantMessage;
+  if (!pendingMessage) return false;
+
+  appendVisibleSessionMessage(state, pendingMessage);
+  state.pendingCompatibilityAssistantMessage = undefined;
   return true;
 }
 
@@ -586,15 +645,112 @@ function serializeContextUsage(usage: ContextUsage | undefined): string {
   return JSON.stringify(usage ?? null);
 }
 
-function readRenderableSessionMessage(entry: Record<string, unknown>): SessionMessage | null {
+function getSessionWarnings(state: SessionMessageState): SessionWarning[] {
+  const warnings: SessionWarning[] = [];
+
+  if (state.compatibilityMode) {
+    warnings.push({
+      id: "compatibility-mode",
+      title: "Compatibility mode",
+      message: "This session is being rendered in compatibility mode because older entries were created before pi-lifecycle markers were available. Older assistant messages are reconstructed best-effort. For best results when resuming this session, make sure you've installed the required pi extensions listed in the pi-qcode README.",
+    });
+  }
+
+  return warnings;
+}
+
+function appendVisibleSessionMessage(
+  state: SessionMessageState,
+  message: SessionMessage,
+): void {
+  removeThinkingMessage(state.visibleMessages);
+  state.visibleMessages.push(message);
+  state.lastRenderedWasUser = message.role === "user";
+  state.thinkingCounts = {};
+  state.pendingAssistantMessage = undefined;
+  state.pendingCompatibilityAssistantMessage = undefined;
+  if (state.lastRenderedWasUser) {
+    upsertThinkingMessage(state.visibleMessages, state.thinkingCounts);
+  }
+}
+
+interface PiLifecycleEntry {
+  event: string;
+  state?: string;
+}
+
+function readPiLifecycleEntry(entry: Record<string, unknown>): PiLifecycleEntry | undefined {
+  if (entry.type !== "custom" || entry.customType !== "pi-lifecycle") return undefined;
+
+  const data = readRecord(entry.data);
+  const event = typeof data?.event === "string"
+    ? data.event
+    : typeof entry.event === "string"
+      ? entry.event
+      : undefined;
+  if (!event) return undefined;
+
+  const state = typeof data?.state === "string"
+    ? data.state
+    : typeof entry.state === "string"
+      ? entry.state
+      : undefined;
+
+  return { event, state };
+}
+
+function updateSessionLifecycleState(
+  state: SessionMessageState,
+  lifecycleEntry: PiLifecycleEntry,
+): boolean {
+  if (lifecycleEntry.event === "session_start") {
+    state.activeLifecycleRun = false;
+    state.pendingAssistantMessage = undefined;
+    return false;
+  }
+
+  if (lifecycleEntry.event === "agent_start") {
+    state.activeLifecycleRun = true;
+    state.pendingAssistantMessage = undefined;
+    return false;
+  }
+
+  if (
+    lifecycleEntry.event === "agent_end" ||
+    (lifecycleEntry.event === "session_shutdown" && lifecycleEntry.state === "idle")
+  ) {
+    state.activeLifecycleRun = false;
+    return finalizePendingAssistantMessage(state);
+  }
+
+  return false;
+}
+
+function finalizePendingAssistantMessage(state: SessionMessageState): boolean {
+  if (state.pendingAssistantMessage) {
+    appendVisibleSessionMessage(state, state.pendingAssistantMessage);
+    return true;
+  }
+
+  const hadThinkingMessage = state.visibleMessages.at(-1)?.kind === "thinking";
+  removeThinkingMessage(state.visibleMessages);
+  state.lastRenderedWasUser = false;
+  state.thinkingCounts = {};
+  return Boolean(hadThinkingMessage);
+}
+
+function readRenderableSessionMessage(
+  entry: Record<string, unknown>,
+  options: { includeAssistant?: boolean } = {},
+): SessionMessage | null {
   const messageEntry = entry.message;
   if (entry.type !== "message" || !messageEntry || typeof messageEntry !== "object") return null;
 
   const message = messageEntry as Record<string, unknown>;
   const role = String(message.role || "message");
-  const errorMessage = role === "assistant" ? readAssistantErrorMessage(message, entry) : "";
-  if (role !== "user" && !errorMessage && !isCompleteAssistantMessage(message, entry)) return null;
+  if (role !== "user" && !(options.includeAssistant && role === "assistant")) return null;
 
+  const errorMessage = role === "assistant" ? readAssistantErrorMessage(message, entry) : "";
   const text = errorMessage || readText(message.content, {
     collapseSkillContent: role === "user",
   });
@@ -605,29 +761,6 @@ function readRenderableSessionMessage(entry: Record<string, unknown>): SessionMe
     text,
     kind: "message",
   };
-}
-
-// An assistant message is considered complete if any provider signal indicates it finished
-// successfully. Different providers/versions use different conventions, so we check all
-// known signals additively — any one match is sufficient.
-function isCompleteAssistantMessage(
-  message: Record<string, unknown>,
-  entry: Record<string, unknown>,
-): boolean {
-  // Convention 1 (openai / some providers): a `phase` field set to "final" or "final_answer"
-  // somewhere in the entry tree.
-  if (hasFinalPhase(entry)) return true;
-
-  // Convention 2 (openrouter / most providers): a `stopReason` field is present (any value means the
-  // message is complete — error/aborted are still worth showing).
-  const stopReason = typeof message.stopReason === "string"
-    ? message.stopReason
-    : typeof entry.stopReason === "string"
-      ? entry.stopReason
-      : "";
-  if (stopReason) return true;
-
-  return false;
 }
 
 function readAssistantErrorMessage(
@@ -891,7 +1024,11 @@ function createSessionFileWatcher(
   filePath: string,
   startPosition: number,
   messageState: SessionMessageState,
-  onMessages: (messages: SessionMessage[], contextUsage?: ContextUsage) => void,
+  onMessages: (
+    messages: SessionMessage[],
+    contextUsage?: ContextUsage,
+    warnings?: SessionWarning[],
+  ) => void,
 ): vscode.Disposable | undefined {
   let disposed = false;
   let offset = startPosition;
@@ -930,7 +1067,13 @@ function createSessionFileWatcher(
         (didChange, line) => updateSessionMessageState(messageState, line) || didChange,
         false,
       );
-      if (changed) onMessages(messageState.visibleMessages, messageState.contextUsage);
+      if (changed) {
+        onMessages(
+          messageState.visibleMessages,
+          messageState.contextUsage,
+          getSessionWarnings(messageState),
+        );
+      }
     } catch {
       // Ignore transient reads while the session file is being appended.
     } finally {

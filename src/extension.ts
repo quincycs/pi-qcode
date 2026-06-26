@@ -13,7 +13,7 @@ import {
   readQcodeSettings,
   writeQcodeSettings,
 } from "./qcodeSettings";
-import type { SessionDetail } from "./sessionFiles";
+import type { SessionDetail, SessionWarning } from "./sessionFiles";
 import { readSessionDetail, watchSessionDetail } from "./sessionFiles";
 import { delay, getNonce } from "./utils";
 import { renderHome } from "./webviews/home";
@@ -37,6 +37,7 @@ type WebviewMessage =
   | { command: "confirmDeleteHashOption"; index?: number; label?: string }
   | { command: "confirmDeleteProviderOption"; index?: number; label?: string }
   | { command: "saveLastUsedProvider"; nickname?: string }
+  | { command: "showSessionWarnings"; warnings?: unknown }
   | { command: "sendMessage"; filePath?: string; text?: string; providerCliArgs?: string }
   | { command: "copyToClipboard"; text?: string }
   | { command: "openFileReference"; value?: string }
@@ -154,6 +155,7 @@ export function activate(context: vscode.ExtensionContext): void {
             title: session.title,
             messages: session.messages,
             contextUsage: session.contextUsage,
+            warnings: session.warnings,
           });
         };
 
@@ -261,6 +263,18 @@ export function activate(context: vscode.ExtensionContext): void {
               error: error instanceof Error ? error.message : String(error),
             });
           }
+        };
+
+        const handleShowSessionWarnings = async (
+          message: Extract<WebviewMessage, { command: "showSessionWarnings" }>,
+        ) => {
+          const warnings = readWebviewSessionWarnings(message.warnings);
+          if (!warnings.length) return;
+
+          await vscode.window.showWarningMessage(
+            formatSessionWarnings(warnings),
+            { modal: true },
+          );
         };
 
         const handleSaveLastUsedProvider = async (
@@ -388,6 +402,10 @@ export function activate(context: vscode.ExtensionContext): void {
             void handleSaveLastUsedProvider(message);
           }
 
+          if (message.command === "showSessionWarnings") {
+            void handleShowSessionWarnings(message);
+          }
+
           if (
             message.command === "confirmDeleteHashOption" ||
             message.command === "confirmDeleteProviderOption"
@@ -487,6 +505,31 @@ function isPathInside(filePath: string, folderPath: string): boolean {
 function getWorkspaceCwd(): string | undefined {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   return workspaceFolder ? workspaceFolder.uri.fsPath : undefined;
+}
+
+function readWebviewSessionWarnings(value: unknown): SessionWarning[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return undefined;
+      const warning = item as Record<string, unknown>;
+      const id = typeof warning.id === "string" ? warning.id : "session-warning";
+      const title = typeof warning.title === "string" ? warning.title.trim() : "Session warning";
+      const message = typeof warning.message === "string" ? warning.message.trim() : "";
+      return message ? { id, title, message } : undefined;
+    })
+    .filter((warning): warning is SessionWarning => Boolean(warning));
+}
+
+function formatSessionWarnings(warnings: SessionWarning[]): string {
+  if (warnings.length === 1) {
+    return `${warnings[0].title}\n\n${warnings[0].message}`;
+  }
+
+  return warnings
+    .map((warning) => `${warning.title}\n${warning.message}`)
+    .join("\n\n");
 }
 
 export function deactivate(): void {}

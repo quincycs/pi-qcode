@@ -19,10 +19,14 @@ The design is meant to be a chill version of the pi experience, where messages i
 
 Install the pi cli. [more info](https://pi.dev)
 
-Install a needed pi extension: `pi-msg` [more info](https://github.com/m7l5/pi-msg)
+Install two pi extensions:
+
+- `pi-msg` [more info](https://github.com/m7l5/pi-msg)
+- `pi-lifecycle` [more info](https://github.com/quincycs/pi-lifecycle)
 
 ```sh
 pi install git:github.com/m7l5/pi-msg
+pi install git:github.com/quincycs/pi-lifecycle
 ```
 
 ## Install from vscode marketplace

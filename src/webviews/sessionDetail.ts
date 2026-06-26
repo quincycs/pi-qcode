@@ -93,6 +93,25 @@ export function renderSessionDetail(
   .context-usage-value {
     flex: 0 0 auto;
   }
+  .session-warning {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    color: var(--vscode-charts-yellow, #cca700);
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+    line-height: 22px;
+  }
+  .session-warning:hover {
+    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+  }
+  .session-warning[hidden] {
+    display: none !important;
+  }
   .context-usage-percent-warning {
     color: var(--vscode-charts-yellow, #cca700);
   }
@@ -266,6 +285,7 @@ ${messageRenderingStyles}
     <header class="header">
       <button type="button" class="home-button" id="home-button" aria-label="Home" title="Home">←</button>
       <div class="context-usage" id="context-usage" aria-label="Context window usage" title="Context usage unavailable">—</div>
+      <button type="button" class="session-warning" id="session-warning" aria-label="Session warnings" title="Session warnings" hidden>⚠</button>
     </header>
     <section class="body">
       ${renderSessionDetailBody(
@@ -289,6 +309,7 @@ ${messageRenderingStyles}
     const input = document.getElementById('message-input');
     const messages = document.getElementById('messages');
     const contextUsage = document.getElementById('context-usage');
+    const sessionWarning = document.getElementById('session-warning');
     const typeahead = document.getElementById('typeahead');
     const typeaheadList = document.getElementById('typeahead-list');
     let completionState = null;
@@ -298,6 +319,23 @@ ${messageRenderingStyles}
     let searchTimer = undefined;
     const providerOptions = ${toScriptJson(providerOptions)};
     const lastUsedProviderNickname = ${toScriptJson(lastUsedProviderNickname)};
+    let sessionWarnings = [];
+
+    const readSessionWarnings = (warnings) => {
+      if (!Array.isArray(warnings)) return [];
+      return warnings.filter((warning) => warning && typeof warning.message === 'string' && warning.message.trim());
+    };
+    const updateSessionWarnings = (warnings) => {
+      sessionWarnings = readSessionWarnings(warnings);
+      if (!sessionWarning) return;
+
+      sessionWarning.hidden = !sessionWarnings.length;
+      const title = sessionWarnings.length === 1
+        ? String(sessionWarnings[0].title || 'Session warning')
+        : sessionWarnings.length + ' session warnings';
+      sessionWarning.title = title;
+      sessionWarning.setAttribute('aria-label', title);
+    };
 
     const resizeInput = () => {
       input.style.height = 'auto';
@@ -596,10 +634,14 @@ ${messageRenderingScript}
     qcodeMessageRendering.installClickHandlers(vscode);
     qcodeMessageRendering.renderExistingMessages();
     updateContextUsage(${toScriptJson(session.contextUsage)});
+    updateSessionWarnings(${toScriptJson(session.warnings ?? [])});
     if (initialInput) addToInput(initialInput);
 
     document.getElementById('home-button').addEventListener('click', () => {
       vscode.postMessage({ command: 'home' });
+    });
+    sessionWarning?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'showSessionWarnings', warnings: sessionWarnings });
     });
     document.getElementById('draft-provider-select')?.addEventListener('change', (event) => {
       const target = event.target;
@@ -673,6 +715,7 @@ ${messageRenderingScript}
         form.dataset.filePath = data.filePath || '';
         const shouldScroll = replaceMessages(Array.isArray(data.messages) ? data.messages : []);
         updateContextUsage(data.contextUsage);
+        updateSessionWarnings(data.warnings);
         if (shouldScroll) requestAnimationFrame(scrollLastMessageTop);
         return;
       }
@@ -680,6 +723,7 @@ ${messageRenderingScript}
       if (data.command === 'replaceMessages' && Array.isArray(data.messages)) {
         const shouldScroll = replaceMessages(data.messages);
         updateContextUsage(data.contextUsage);
+        updateSessionWarnings(data.warnings);
         if (shouldScroll) requestAnimationFrame(scrollLastMessageTop);
         return;
       }
