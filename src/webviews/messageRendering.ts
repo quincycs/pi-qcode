@@ -264,6 +264,7 @@ export const messageRenderingScript = String.raw`
         let listItems = [];
         let inFence = false;
         let fenceLanguage = '';
+        let fenceIndent = '';
         let codeLines = [];
         const flushParagraph = () => {
           if (!paragraph.length) return;
@@ -280,6 +281,7 @@ export const messageRenderingScript = String.raw`
           html += '<pre><code' + languageClass + '>' + escapeHtml(codeLines.join('\n')) + '</code></pre>';
           codeLines = [];
           fenceLanguage = '';
+          fenceIndent = '';
         };
         const parseTableRow = (line) => {
           const trimmed = String(line || '').trim();
@@ -321,7 +323,7 @@ export const messageRenderingScript = String.raw`
         };
         for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
           const line = lines[lineIndex];
-          const fenceMatch = line.match(/^\`\`\`\s*([^\`]*)$/);
+          const fenceMatch = line.match(/^(\s*)\`\`\`\s*([^\`]*)$/);
           if (fenceMatch) {
             if (inFence) {
               flushCode();
@@ -330,12 +332,13 @@ export const messageRenderingScript = String.raw`
               flushParagraph();
               flushList();
               inFence = true;
-              fenceLanguage = fenceMatch[1].trim().split(/\s+/)[0] || '';
+              fenceIndent = fenceMatch[1] || '';
+              fenceLanguage = fenceMatch[2].trim().split(/\s+/)[0] || '';
             }
             continue;
           }
           if (inFence) {
-            codeLines.push(line);
+            codeLines.push(fenceIndent && line.startsWith(fenceIndent) ? line.slice(fenceIndent.length) : line);
             continue;
           }
           if (!line.trim()) {
