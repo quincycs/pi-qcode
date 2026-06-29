@@ -161,7 +161,7 @@ export function renderHome(nonce: string, workspaceCwd?: string): string {
 <body>
   <main class="home">
     <section class="header">
-      <div class="eyebrow">QCODE V0.0.13</div>
+      <div class="eyebrow">QCODE V0.0.14</div>
       <div class="header-row">
         <h1>Sessions</h1>
         <div class="header-actions">
