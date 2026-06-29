@@ -2,18 +2,21 @@
 
 Native vscode extension for pi coding agent. Uses pi cli within vscode terminal to power the extension behind the scenes while rendering rich UI in the native extension.
 
-The design is meant to be a chill version of the pi experience, where messages in the session detail only the important final turn messages + user messages. Go to the vs terminal to see everything pi is doing under the hood if necessary.
+The design is meant to be a chill version of the pi experience, but you can immediately jump to the full Pi experience at any time you want. qcode UI supresses the noisy messages and only shows the final turn messages + user messages. Go to the active vscode terminal to go back to the full pi experience.
+
+If you like it, consider a [donation](http://venmo.com/quincycs).
 
 ## Features
 
-- Recent sessions for the open vscode folder.
-- Sessions created outside the extension are also integrated.
+- Powered by Pi inside vscode terminal, so you can jump into the full experience anytime.
+- UI only shows the final turn messages + user messages, suppressing the noisy messages.
+- Thinking... indicator shows summary of what's happening (eg skills activated, and counts of tool calls).
+- "Enter" key is a new line, encouraging you to slowdown and think before sending. Use `cmd+enter` (mac) or `ctrl+enter` (windows/linux) to send.
+- "Add to pi-qcode" is a context menu option to add highlighted code in the editor into a draft message to send to pi. This menu is also available in the vscode terminal. Hotkey: `cmd+;` (mac) or `ctrl+;` (windows/linux)
+- Shows all sessions for the open vscode folder (even external / pre-existing sessions).
 - Rich text messages give you clickable links and rendered markdown.
-- "Add to pi-qcode" is a context menu option to add highlighted code in the editor into a draft message to send to pi.
 - Typeahead @filementions
-- Customizable typeahead #hashcommands to inject prompts.
-- Opens pi inside vscode terminal, so you can jump into the terminal and interact with pi directly if ever necessary.
-- Thinking... gives a summary of what pi is doing.
+- Typeahead #hashcommands to inject customizable prompts. (basic prompt templates)
 
 ## Prerequisites
 
@@ -51,5 +54,4 @@ npm run package-uninstall
 Inspiration for this project came from these inspiring projects:
 
 - [m7l5/pi-msg](https://github.com/m7l5/pi-msg)
-- [AcendWay/PiDE_Piper_VSCode_Extention](https://github.com/AcendWay/PiDE_Piper_VSCode_Extention)
 - [Cline/Cline](https://github.com/cline/cline)
