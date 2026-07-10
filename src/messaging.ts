@@ -50,13 +50,15 @@ export async function sendSessionMessage(
   const resolvedFilePath = path.resolve(filePath);
   const existingMessageSession = messageSessions.get(resolvedFilePath);
   if (existingMessageSession) {
-    void sendSocketMessage(existingMessageSession.guid, {
-      type: "text",
-      from: "qcode",
-      text,
-      asUser: true,
-    });
-    return {};
+    const sent =
+      existingMessageSession.terminal.exitStatus === undefined &&
+      (await sendSocketMessage(existingMessageSession.guid, {
+        type: "text",
+        from: "qcode",
+        text,
+        asUser: true,
+      }));
+    if (sent) return {};
   }
 
   const guid = crypto.randomUUID();
@@ -117,27 +119,33 @@ async function waitForNewSessionFile(
 function sendSocketMessage(
   target: string,
   message: MsgMessage,
-): Promise<string> {
+): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = net.createConnection(getMsgSocketPath(target));
-    let reply = "";
+    let settled = false;
+    const finish = (sent: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (!sent) socket.destroy();
+      resolve(sent);
+    };
 
-    socket.setTimeout(3000, () => {
-      socket.destroy();
-      resolve(reply);
-    });
+    socket.setTimeout(3000, () => finish(false));
 
     socket.on("connect", () => {
-      socket.write(`${JSON.stringify(message)}\n`);
-      socket.end();
+      socket.write(`${JSON.stringify(message)}\n`, (error) => {
+        if (error) {
+          finish(false);
+          return;
+        }
+
+        socket.end();
+        finish(true);
+      });
     });
 
-    socket.on("data", (chunk) => {
-      reply += chunk.toString();
-    });
-
-    socket.on("end", () => resolve(reply));
-    socket.on("error", () => resolve(""));
+    socket.on("close", () => finish(false));
+    socket.on("error", () => finish(false));
   });
 }
 
