@@ -42,6 +42,13 @@ export const messageRenderingStyles = String.raw`
     color: var(--vscode-descriptionForeground);
     border-left: 3px solid var(--vscode-textBlockQuote-border, var(--vscode-widget-border, transparent));
   }
+  .message-text .code-block {
+    position: relative;
+    margin: 0 0 0.85em;
+  }
+  .message-text .code-block:last-child {
+    margin-bottom: 0;
+  }
   .message-text pre {
     overflow-x: auto;
     padding: 10px;
@@ -49,6 +56,38 @@ export const messageRenderingStyles = String.raw`
     border: 1px solid var(--vscode-widget-border, transparent);
     border-radius: 4px;
     white-space: pre;
+  }
+  .message-text .code-block pre {
+    margin: 0;
+  }
+  .code-block-copy-button {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 1;
+    padding: 2px 7px;
+    opacity: 0;
+    pointer-events: none;
+    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+    background: var(--vscode-button-secondaryBackground, var(--vscode-toolbar-hoverBackground));
+    border: 1px solid var(--vscode-widget-border, transparent);
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    line-height: 18px;
+  }
+  .message-text .code-block:hover .code-block-copy-button,
+  .code-block-copy-button:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .code-block-copy-button:hover {
+    background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+  }
+  .code-block-copy-button:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder, #007acc);
+    outline-offset: 1px;
   }
   .message-text code {
     padding: 0 3px;
@@ -278,7 +317,7 @@ export const messageRenderingScript = String.raw`
         };
         const flushCode = () => {
           const languageClass = fenceLanguage ? ' class="language-' + escapeAttribute(fenceLanguage) + '"' : '';
-          html += '<pre><code' + languageClass + '>' + escapeHtml(codeLines.join('\n')) + '</code></pre>';
+          html += '<div class="code-block"><button type="button" class="code-block-copy-button" aria-label="Copy code to clipboard" title="Copy code to clipboard">Copy</button><pre><code' + languageClass + '>' + escapeHtml(codeLines.join('\n')) + '</code></pre></div>';
           codeLines = [];
           fenceLanguage = '';
           fenceIndent = '';
@@ -526,6 +565,22 @@ export const messageRenderingScript = String.raw`
         document.addEventListener('click', (event) => {
           const target = getEventElement(event);
           if (!target || !target.closest('.qcode-context-menu')) hideContextMenu();
+
+          const copyCodeButton = target && target.closest('.code-block-copy-button');
+          if (copyCodeButton) {
+            const code = copyCodeButton.closest('.code-block')?.querySelector('code');
+            vscode.postMessage({ command: 'copyToClipboard', text: code?.textContent || '' });
+            copyCodeButton.textContent = 'Copied';
+            copyCodeButton.setAttribute('aria-label', 'Code copied to clipboard');
+            copyCodeButton.setAttribute('title', 'Code copied to clipboard');
+            window.setTimeout(() => {
+              if (!copyCodeButton.isConnected) return;
+              copyCodeButton.textContent = 'Copy';
+              copyCodeButton.setAttribute('aria-label', 'Copy code to clipboard');
+              copyCodeButton.setAttribute('title', 'Copy code to clipboard');
+            }, 1500);
+            return;
+          }
 
           const fileReference = target && target.closest('a[data-file-reference]');
           if (fileReference) {
