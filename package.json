@@ -16,11 +16,7 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [
-    "onView:pi-qcode.home",
-    "onCommand:pi-qcode.addToQcode",
-    "onCommand:pi-qcode.addTerminalSelectionToQcode"
-  ],
+  "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -37,7 +33,8 @@
         {
           "type": "webview",
           "id": "pi-qcode.home",
-          "name": "v0.0.16"
+          "name": "v0.0.16",
+          "icon": "media/icon.svg"
         }
       ]
     },
