@@ -11,6 +11,7 @@ import {
 import { searchHashAutocompleteSuggestions } from "./hashAutocomplete";
 import { PiTerminalSessions, type PiTerminalSessionView } from "./piTerminalSessions";
 import {
+  dismissWhatsNewVersion,
   getSettingsFilePath,
   readQcodeSettings,
   type QcodeSettings,
@@ -22,6 +23,7 @@ import { delay, getNonce } from "./utils";
 import { renderHome } from "./webviews/home";
 import { renderSessionDetail } from "./webviews/sessionDetail";
 import { renderSettings } from "./webviews/settings";
+import { getWhatsNewRelease } from "./whatsNew";
 
 const viewType = "pi-qcode.home";
 
@@ -33,6 +35,7 @@ type Route =
 type WebviewMessage =
   | { command: "openSession"; filePath?: string }
   | { command: "newSession" }
+  | { command: "dismissWhatsNew"; version?: string }
   | { command: "ready" }
   | { command: "home" }
   | { command: "settings" }
@@ -51,6 +54,7 @@ type WebviewMessage =
 
 export function activate(context: vscode.ExtensionContext): void {
   const terminalSessions = new PiTerminalSessions(context);
+  const extensionVersion = String(context.extension.packageJSON.version || "");
   let addToActiveQcodeInput: (() => void) | undefined;
   let pendingInputText = "";
   const defaultAssistantSoundUri = vscode.Uri.joinPath(
@@ -115,6 +119,9 @@ export function activate(context: vscode.ExtensionContext): void {
         let sessionWatcher: vscode.Disposable | undefined;
         let detailWebviewReady = false;
         const shownBridgeActionErrors = new Set<string>();
+        const dismissedWhatsNewVersions = new Set(
+          readQcodeSettings().dismissedWhatsNewVersions,
+        );
 
         const configureWebviewOptions = (settings: QcodeSettings = readQcodeSettings()) => {
           const soundPath = resolveAssistantSoundPath(settings);
@@ -144,7 +151,15 @@ export function activate(context: vscode.ExtensionContext): void {
           detailWebviewReady = false;
           configureWebviewOptions();
           currentRoute = { name: "home" };
-          view.webview.html = renderHome(getNonce(), getWorkspaceCwd());
+          const whatsNew = dismissedWhatsNewVersions.has(extensionVersion)
+            ? undefined
+            : getWhatsNewRelease(extensionVersion);
+          view.webview.html = renderHome(
+            getNonce(),
+            getWorkspaceCwd(),
+            extensionVersion,
+            whatsNew,
+          );
         };
 
         const showSettings = () => {
@@ -463,6 +478,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (message.command === "newSession") {
             showNewSessionDetail();
+          }
+
+          if (
+            message.command === "dismissWhatsNew" &&
+            message.version === extensionVersion
+          ) {
+            dismissedWhatsNewVersions.add(extensionVersion);
+            void dismissWhatsNewVersion(extensionVersion).catch((error) => {
+              dismissedWhatsNewVersions.delete(extensionVersion);
+              void vscode.window.showErrorMessage(
+                `Unable to save What's new dismissal: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            });
           }
 
           if (message.command === "home") {

@@ -33,7 +33,7 @@
         {
           "type": "webview",
           "id": "pi-qcode.home",
-          "name": "v0.0.16",
+          "name": "Sessions",
           "icon": "media/icon.svg"
         }
       ]
@@ -84,9 +84,9 @@
     "compile": "tsc --project tsconfig.json",
     "watch": "tsc --watch --project tsconfig.json",
     "test": "npm run compile && node --test dist/test/*.test.js",
-    "package": "npm run compile && vsce package --allow-missing-repository --out pi-qcode-0.0.16.vsix && npm run package:verify",
-    "package:verify": "node scripts/verify-vsix.cjs pi-qcode-0.0.16.vsix",
-    "package-install": "npm run package && code --install-extension pi-qcode-0.0.16.vsix --force",
+    "package": "npm run compile && vsce package --allow-missing-repository --out pi-qcode.vsix && npm run package:verify",
+    "package:verify": "node scripts/verify-vsix.cjs pi-qcode.vsix",
+    "package-install": "npm run package && code --install-extension pi-qcode.vsix --force",
     "package-uninstall": "code --uninstall-extension QuincyMitchell.pi-qcode"
   },
   "devDependencies": {

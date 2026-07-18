@@ -18,6 +18,7 @@ export interface QcodeSettings {
   lastUsedProviderNickname: string;
   assistantSoundEnabled: boolean;
   assistantSoundPath: string;
+  dismissedWhatsNewVersions: string[];
 }
 
 const settingsDirectory = path.join(os.homedir(), ".pi", "qcode");
@@ -27,9 +28,9 @@ export function getSettingsFilePath(): string {
   return settingsFilePath;
 }
 
-export function readQcodeSettings(): QcodeSettings {
+export function readQcodeSettings(filePath = settingsFilePath): QcodeSettings {
   try {
-    const raw = fs.readFileSync(settingsFilePath, "utf8");
+    const raw = fs.readFileSync(filePath, "utf8");
     return normalizeSettings(JSON.parse(raw));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -41,19 +42,56 @@ export function readQcodeSettings(): QcodeSettings {
       lastUsedProviderNickname: "",
       assistantSoundEnabled: false,
       assistantSoundPath: "",
+      dismissedWhatsNewVersions: [],
     };
   }
 }
 
-export async function writeQcodeSettings(settings: unknown): Promise<QcodeSettings> {
+export async function writeQcodeSettings(
+  settings: unknown,
+  filePath = settingsFilePath,
+): Promise<QcodeSettings> {
+  const record = settings && typeof settings === "object"
+    ? settings as Record<string, unknown>
+    : {};
   const normalized = normalizeSettings(settings);
-  await fs.promises.mkdir(settingsDirectory, { recursive: true });
+
+  // The settings UI does not edit internal state, so preserve it when omitted.
+  if (!Object.prototype.hasOwnProperty.call(record, "dismissedWhatsNewVersions")) {
+    normalized.dismissedWhatsNewVersions = readQcodeSettings(
+      filePath,
+    ).dismissedWhatsNewVersions;
+  }
+
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
   await fs.promises.writeFile(
-    settingsFilePath,
+    filePath,
     `${JSON.stringify(normalized, null, 2)}\n`,
     "utf8",
   );
   return normalized;
+}
+
+export async function dismissWhatsNewVersion(
+  version: string,
+  filePath = settingsFilePath,
+): Promise<QcodeSettings> {
+  const normalizedVersion = version.trim();
+  const settings = readQcodeSettings(filePath);
+  if (
+    !normalizedVersion ||
+    settings.dismissedWhatsNewVersions.includes(normalizedVersion)
+  ) {
+    return settings;
+  }
+
+  return writeQcodeSettings({
+    ...settings,
+    dismissedWhatsNewVersions: [
+      ...settings.dismissedWhatsNewVersions,
+      normalizedVersion,
+    ],
+  }, filePath);
 }
 
 function normalizeSettings(value: unknown): QcodeSettings {
@@ -79,12 +117,26 @@ function normalizeSettings(value: unknown): QcodeSettings {
     ? record.assistantSoundPath.trim()
     : "";
 
+  const dismissedWhatsNewVersions = Array.isArray(
+    record.dismissedWhatsNewVersions,
+  )
+    ? [
+        ...new Set(
+          record.dismissedWhatsNewVersions
+            .filter((version): version is string => typeof version === "string")
+            .map((version) => version.trim())
+            .filter(Boolean),
+        ),
+      ]
+    : [];
+
   return {
     hashAutocompleteOptions,
     providerOptions,
     lastUsedProviderNickname,
     assistantSoundEnabled,
     assistantSoundPath,
+    dismissedWhatsNewVersions,
   };
 }
 

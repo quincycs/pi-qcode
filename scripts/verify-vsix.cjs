@@ -2,7 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const vsixPath = path.resolve(process.argv[2] || "pi-qcode-0.0.16.vsix");
+const vsixPath = path.resolve(process.argv[2] || "pi-qcode.vsix");
 const requiredEntry = Buffer.from("extension/pi-extensions/qcode-bridge.ts", "utf8");
 let archive;
 try {
