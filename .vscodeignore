@@ -1,6 +1,12 @@
-node_modules/
-.vscode/
-_planning/
+node_modules/**
+.vscode/**
+.git/**
+_planning/**
+_screenshots/**
+src/**
+dist/test/**
+scripts/**
+tsconfig.json
 .DS_Store
 .gitignore
 *.vsix

@@ -23,6 +23,9 @@ export interface SessionMessage {
   text: string;
   kind?: "message" | "thinking";
   counts?: Record<string, number>;
+  /** Present only for qcode's local optimistic outbox. */
+  clientMessageId?: string;
+  deliveryState?: "pending" | "accepted" | "correlated" | "failed";
 }
 
 export interface ContextUsage {
@@ -48,6 +51,7 @@ interface SessionMessageState {
   hasSeenLifecycleEntry: boolean;
   compatibilityMode: boolean;
   activeLifecycleRun: boolean;
+  currentLifecycleRunId?: string;
   pendingAssistantMessage?: SessionMessage;
   pendingCompatibilityAssistantMessage?: SessionMessage;
   contextUsage?: ContextUsage;
@@ -55,6 +59,7 @@ interface SessionMessageState {
   provider?: string;
   thinkingLevel?: string;
   sessionCost: number;
+  sessionCostKnown: boolean;
 }
 
 export interface SessionDetail {
@@ -236,13 +241,19 @@ function readUsage(value: unknown): UsageRecord | undefined {
     cacheRead: readPositiveNumber(usage.cacheRead),
     cacheWrite: readPositiveNumber(usage.cacheWrite),
     totalTokens: readPositiveNumber(usage.totalTokens),
-    costTotal: readPositiveNumber(readRecord(usage.cost)?.total),
+    costTotal: readNonNegativeNumber(readRecord(usage.cost)?.total),
   };
 }
 
 function readPositiveNumber(value: unknown): number | undefined {
   const numberValue = Number(value);
   return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : undefined;
+}
+
+function readNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
 }
 
 function calculateUsageTokens(usage: UsageRecord): number {
@@ -342,10 +353,7 @@ function readSessionFileCandidate(filePath: string): SessionFileCandidate | unde
 function parseSessionFile(filePath: string): RecentSession | null {
   try {
     const stat = fs.statSync(filePath);
-    const lines = fs
-      .readFileSync(filePath, "utf8")
-      .split("\n")
-      .filter((line) => line.trim());
+    const lines = selectActiveBranchLines(fs.readFileSync(filePath, "utf8"));
 
     let id = path.basename(filePath);
     let cwd = "";
@@ -353,6 +361,7 @@ function parseSessionFile(filePath: string): RecentSession | null {
     let messageCount = 0;
     let firstUserMessage = "";
     let latestUserMessage = "";
+    let sessionName = "";
     let totalTokens = 0;
     let createdAt = stat.birthtime;
     let lastActiveAt = stat.mtime;
@@ -372,8 +381,12 @@ function parseSessionFile(filePath: string): RecentSession | null {
           if (timestamp) createdAt = timestamp;
         }
 
-        if (entry.type === "model_change" && entry.modelId && model === "unknown") {
+        if (entry.type === "model_change" && entry.modelId) {
           model = String(entry.modelId);
+        }
+
+        if (entry.type === "session_info") {
+          sessionName = String(entry.name || "").trim();
         }
 
         if (entry.type === "message" && entry.message) {
@@ -406,7 +419,7 @@ function parseSessionFile(filePath: string): RecentSession | null {
       totalTokens,
       filePath,
       fileName: path.basename(filePath),
-      title: firstUserMessage || path.basename(filePath),
+      title: sessionName || firstUserMessage || path.basename(filePath),
       preview: latestUserMessage || firstUserMessage || "(no messages yet)",
       createdAt,
       lastActiveAt,
@@ -416,15 +429,64 @@ function parseSessionFile(filePath: string): RecentSession | null {
   }
 }
 
-function readSessionMessageState(content: string): SessionMessageState {
+export function readSessionMessagesFromContent(content: string): {
+  messages: SessionMessage[];
+  warnings: SessionWarning[];
+} {
+  const state = readSessionMessageState(content, { skipContextUsage: true });
+  return { messages: state.visibleMessages, warnings: getSessionWarnings(state) };
+}
+
+export function readSessionContextUsageFromContent(
+  content: string,
+): ContextUsage | undefined {
+  return readSessionMessageState(content).contextUsage;
+}
+
+function readSessionMessageState(
+  content: string,
+  options: { skipContextUsage?: boolean } = {},
+): SessionMessageState {
   const state = createEmptySessionMessageState();
 
-  for (const line of content.split(/\r\n|\r|\n/)) {
-    updateSessionMessageState(state, line);
+  for (const line of selectActiveBranchLines(content)) {
+    updateSessionMessageState(state, line, options);
   }
   finalizeSessionMessageState(state);
 
   return state;
+}
+
+/** Return the session header followed by only the append-selected active tree path. */
+export function selectActiveBranchLines(content: string): string[] {
+  const parsed: Array<{ line: string; entry: Record<string, unknown> }> = [];
+  for (const line of content.split(/\r\n|\r|\n/)) {
+    if (!line.trim()) continue;
+    const entry = readSessionEntry(line);
+    if (entry) parsed.push({ line, entry });
+  }
+  const header = parsed.find(({ entry }) => entry.type === "session");
+  const treeEntries = parsed.filter(({ entry }) =>
+    entry.type !== "session" && typeof entry.id === "string" && entry.id,
+  );
+  // Legacy v1 files have no tree IDs and remain linear.
+  if (!treeEntries.length) return parsed.map(({ line }) => line);
+
+  const byId = new Map<string, { line: string; entry: Record<string, unknown> }>();
+  for (const item of treeEntries) byId.set(String(item.entry.id), item);
+  let current: { line: string; entry: Record<string, unknown> } | undefined = treeEntries.at(-1);
+  const reversePath: Array<{ line: string; entry: Record<string, unknown> }> = [];
+  const seen = new Set<string>();
+  while (current) {
+    const id = String(current.entry.id);
+    if (seen.has(id)) break;
+    seen.add(id);
+    reversePath.push(current);
+    const parentId = typeof current.entry.parentId === "string" ? current.entry.parentId : undefined;
+    current = parentId ? byId.get(parentId) : undefined;
+  }
+  reversePath.reverse();
+  return [...(header ? [header.line] : []), ...reversePath.map(({ line }) => line)];
 }
 
 function createEmptySessionMessageState(): SessionMessageState {
@@ -435,6 +497,7 @@ function createEmptySessionMessageState(): SessionMessageState {
     hasSeenLifecycleEntry: false,
     compatibilityMode: false,
     activeLifecycleRun: false,
+    currentLifecycleRunId: undefined,
     pendingAssistantMessage: undefined,
     pendingCompatibilityAssistantMessage: undefined,
     contextUsage: undefined,
@@ -442,14 +505,21 @@ function createEmptySessionMessageState(): SessionMessageState {
     provider: undefined,
     thinkingLevel: undefined,
     sessionCost: 0,
+    sessionCostKnown: false,
   };
 }
 
-function updateSessionMessageState(state: SessionMessageState, line: string): boolean {
+function updateSessionMessageState(
+  state: SessionMessageState,
+  line: string,
+  options: { skipContextUsage?: boolean } = {},
+): boolean {
   const entry = readSessionEntry(line);
   if (!entry) return false;
 
-  const contextChanged = updateSessionContextUsage(state, entry);
+  const contextChanged = options.skipContextUsage
+    ? false
+    : updateSessionContextUsage(state, entry);
   const lifecycleEntry = readPiLifecycleEntry(entry);
   if (lifecycleEntry) {
     const compatibilityChanged = !state.hasSeenLifecycleEntry
@@ -568,8 +638,11 @@ function updateSessionContextUsage(
 
       const usage = readUsage(message.usage) ?? readUsage(entry.usage);
       const usedTokens = usage ? calculateUsageTokens(usage) : 0;
-      if (usage?.costTotal) state.sessionCost += usage.costTotal;
-      if (usedTokens > 0 || usage?.costTotal) {
+      if (usage?.costTotal !== undefined) {
+        state.sessionCost += usage.costTotal;
+        state.sessionCostKnown = true;
+      }
+      if (usedTokens > 0 || usage?.costTotal !== undefined) {
         state.contextUsage = buildContextUsage(
           state,
           usedTokens > 0 ? usedTokens : state.contextUsage?.usedTokens,
@@ -625,7 +698,7 @@ function buildContextUsage(
     !state.thinkingLevel &&
     usedTokens === undefined &&
     contextWindow === undefined &&
-    state.sessionCost <= 0
+    !state.sessionCostKnown
   ) {
     return undefined;
   }
@@ -637,7 +710,7 @@ function buildContextUsage(
     modelId: state.modelId,
     provider: state.provider,
     thinkingLevel: state.thinkingLevel,
-    sessionCost: state.sessionCost > 0 ? state.sessionCost : undefined,
+    sessionCost: state.sessionCostKnown ? state.sessionCost : undefined,
   };
 }
 
@@ -652,7 +725,7 @@ function getSessionWarnings(state: SessionMessageState): SessionWarning[] {
     warnings.push({
       id: "compatibility-mode",
       title: "Compatibility mode",
-      message: "This session is being rendered in compatibility mode because older entries were created before pi-lifecycle markers were available. Older assistant messages are reconstructed best-effort. For best results when resuming this session, make sure you've installed the required pi extensions listed in the pi-qcode README.",
+      message: "This inactive legacy session is reconstructed best-effort from its saved JSONL entries. Resume it from qcode to use the bundled live bridge.",
     });
   }
 
@@ -677,6 +750,7 @@ function appendVisibleSessionMessage(
 interface PiLifecycleEntry {
   event: string;
   state?: string;
+  runId?: string;
 }
 
 function readPiLifecycleEntry(entry: Record<string, unknown>): PiLifecycleEntry | undefined {
@@ -695,8 +769,13 @@ function readPiLifecycleEntry(entry: Record<string, unknown>): PiLifecycleEntry 
     : typeof entry.state === "string"
       ? entry.state
       : undefined;
+  const runId = typeof data?.runId === "string"
+    ? data.runId
+    : typeof entry.runId === "string"
+      ? entry.runId
+      : undefined;
 
-  return { event, state };
+  return { event, state, runId };
 }
 
 function updateSessionLifecycleState(
@@ -704,13 +783,18 @@ function updateSessionLifecycleState(
   lifecycleEntry: PiLifecycleEntry,
 ): boolean {
   if (lifecycleEntry.event === "session_start") {
-    state.activeLifecycleRun = false;
+    // Multiple installed lifecycle writers produce the same idle transition.
+    // Never let a late duplicate reset a run that has already become busy.
+    if (state.activeLifecycleRun) return false;
+    state.currentLifecycleRunId = undefined;
     state.pendingAssistantMessage = undefined;
     return false;
   }
 
   if (lifecycleEntry.event === "agent_start") {
+    if (state.activeLifecycleRun) return false;
     state.activeLifecycleRun = true;
+    state.currentLifecycleRunId = lifecycleEntry.runId;
     state.pendingAssistantMessage = undefined;
     return false;
   }
@@ -719,7 +803,13 @@ function updateSessionLifecycleState(
     lifecycleEntry.event === "agent_end" ||
     (lifecycleEntry.event === "session_shutdown" && lifecycleEntry.state === "idle")
   ) {
+    if (!state.activeLifecycleRun) return false;
+    if (
+      lifecycleEntry.runId && state.currentLifecycleRunId &&
+      lifecycleEntry.runId !== state.currentLifecycleRunId
+    ) return false;
     state.activeLifecycleRun = false;
+    state.currentLifecycleRunId = undefined;
     return finalizePendingAssistantMessage(state);
   }
 
@@ -1022,7 +1112,7 @@ function stripJsonComments(value: string): string {
 
 function createSessionFileWatcher(
   filePath: string,
-  startPosition: number,
+  _startPosition: number,
   messageState: SessionMessageState,
   onMessages: (
     messages: SessionMessage[],
@@ -1031,59 +1121,23 @@ function createSessionFileWatcher(
   ) => void,
 ): vscode.Disposable | undefined {
   let disposed = false;
-  let offset = startPosition;
-  let pendingText = "";
 
   const readAppendedLines = () => {
     if (disposed) return;
 
-    let stat: fs.Stats;
     try {
-      stat = fs.statSync(filePath);
-    } catch {
-      return;
-    }
-
-    if (stat.size < offset) {
-      offset = stat.size;
-      pendingText = "";
-    }
-
-    if (stat.size === offset) return;
-
-    let fd: number | undefined;
-    try {
-      const length = stat.size - offset;
-      const buffer = Buffer.alloc(length);
-      fd = fs.openSync(filePath, "r");
-      fs.readSync(fd, buffer, 0, length, offset);
-      offset = stat.size;
-
-      const text = pendingText + buffer.toString("utf8");
-      const lines = text.split(/\r\n|\r|\n/);
-      pendingText = /\r\n$|\r$|\n$/.test(text) ? "" : lines.pop() || "";
-
-      const changed = lines.reduce(
-        (didChange, line) => updateSessionMessageState(messageState, line) || didChange,
-        false,
+      // Rebuild from the complete file. A newly appended entry can select an older
+      // parent, so incremental append parsing cannot correctly follow /tree branches.
+      const content = fs.readFileSync(filePath, "utf8");
+      const rebuiltState = readSessionMessageState(content);
+      Object.assign(messageState, rebuiltState);
+      onMessages(
+        messageState.visibleMessages,
+        messageState.contextUsage,
+        getSessionWarnings(messageState),
       );
-      if (changed) {
-        onMessages(
-          messageState.visibleMessages,
-          messageState.contextUsage,
-          getSessionWarnings(messageState),
-        );
-      }
     } catch {
-      // Ignore transient reads while the session file is being appended.
-    } finally {
-      if (fd !== undefined) {
-        try {
-          fs.closeSync(fd);
-        } catch {
-          // Ignore close errors.
-        }
-      }
+      // Ignore transient reads while the session file is being replaced/appended.
     }
   };
 
@@ -1098,8 +1152,10 @@ function createSessionFileWatcher(
 
   let watcher: fs.FSWatcher;
   try {
-    watcher = fs.watch(filePath, { persistent: false }, (eventType) => {
-      if (eventType === "change") scheduleRead();
+    // Watch the directory so an atomic replacement does not detach the watcher
+    // from the old inode. Both change and rename events can carry new contents.
+    watcher = fs.watch(path.dirname(filePath), { persistent: false }, (_eventType, fileName) => {
+      if (!fileName || fileName.toString() === path.basename(filePath)) scheduleRead();
     });
   } catch {
     return undefined;

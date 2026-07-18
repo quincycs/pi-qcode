@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
@@ -8,7 +9,7 @@ import {
   openFileReference,
 } from "./fileReferences";
 import { searchHashAutocompleteSuggestions } from "./hashAutocomplete";
-import { sendSessionMessage, type MessageSessionMap } from "./messaging";
+import { PiTerminalSessions, type PiTerminalSessionView } from "./piTerminalSessions";
 import {
   getSettingsFilePath,
   readQcodeSettings,
@@ -26,7 +27,7 @@ const viewType = "pi-qcode.home";
 
 type Route =
   | { name: "home" }
-  | { name: "sessionDetail"; filePath?: string }
+  | { name: "sessionDetail"; filePath?: string; bridgeId?: string }
   | { name: "settings" };
 
 type WebviewMessage =
@@ -40,7 +41,7 @@ type WebviewMessage =
   | { command: "confirmDeleteProviderOption"; index?: number; label?: string }
   | { command: "saveLastUsedProvider"; nickname?: string }
   | { command: "showSessionWarnings"; warnings?: unknown }
-  | { command: "sendMessage"; filePath?: string; text?: string; providerCliArgs?: string }
+  | { command: "sendMessage"; filePath?: string; text?: string; providerCliArgs?: string; clientMessageId?: string }
   | { command: "copyToClipboard"; text?: string }
   | { command: "openFileReference"; value?: string }
   | { command: "openExternalUrl"; value?: string }
@@ -49,6 +50,7 @@ type WebviewMessage =
   | { command: "searchHashOptions"; requestId?: number; query?: string };
 
 export function activate(context: vscode.ExtensionContext): void {
+  const terminalSessions = new PiTerminalSessions(context);
   let addToActiveQcodeInput: (() => void) | undefined;
   let pendingInputText = "";
   const defaultAssistantSoundUri = vscode.Uri.joinPath(
@@ -112,7 +114,7 @@ export function activate(context: vscode.ExtensionContext): void {
         let currentRoute: Route = { name: "home" };
         let sessionWatcher: vscode.Disposable | undefined;
         let detailWebviewReady = false;
-        const messageSessions: MessageSessionMap = new Map();
+        const shownBridgeActionErrors = new Set<string>();
 
         const configureWebviewOptions = (settings: QcodeSettings = readQcodeSettings()) => {
           const soundPath = resolveAssistantSoundPath(settings);
@@ -162,10 +164,20 @@ export function activate(context: vscode.ExtensionContext): void {
         const showSessionDetail = (filePath: string) => {
           stopSessionWatcher();
           detailWebviewReady = false;
-          const session = readSessionDetail(filePath);
+          const bridgeSession = terminalSessions.getSessionByFile(filePath);
+          const hasBridgeBaseline = Boolean(bridgeSession &&
+            (bridgeSession.status === "connected" || bridgeSession.messages.length));
+          const session = hasBridgeBaseline && bridgeSession
+            ? {
+                title: bridgeSession.sessionName || path.basename(filePath),
+                filePath,
+                messages: bridgeSession.messages,
+                contextUsage: bridgeSession.contextUsage,
+              }
+            : readSessionDetail(filePath);
           const settings = readQcodeSettings();
           configureWebviewOptions(settings);
-          currentRoute = { name: "sessionDetail", filePath };
+          currentRoute = { name: "sessionDetail", filePath, bridgeId: bridgeSession?.bridgeId };
           view.webview.html = renderSessionDetail(
             filePath,
             getNonce(),
@@ -176,7 +188,7 @@ export function activate(context: vscode.ExtensionContext): void {
               cspSource: view.webview.cspSource,
             },
           );
-          sessionWatcher = watchSessionDetail(session, view.webview);
+          if (!hasBridgeBaseline) sessionWatcher = watchSessionDetail(session, view.webview);
         };
 
         const showNewSessionDetail = () => {
@@ -196,35 +208,75 @@ export function activate(context: vscode.ExtensionContext): void {
           });
         };
 
-        const attachSessionFileToCurrentDetail = (filePath: string) => {
-          if (currentRoute.name !== "sessionDetail" || currentRoute.filePath)
-            return;
+        const applyBridgeSession = (bridgeSession: PiTerminalSessionView) => {
+          if (bridgeSession.actionError && !shownBridgeActionErrors.has(bridgeSession.actionError)) {
+            shownBridgeActionErrors.add(bridgeSession.actionError);
+            void vscode.window.showErrorMessage(bridgeSession.actionError);
+          }
+          if (currentRoute.name !== "sessionDetail") return;
+          if (bridgeSession.status !== "connected" && !bridgeSession.messages.length) return;
+          const routeMatches = currentRoute.bridgeId === bridgeSession.bridgeId ||
+            Boolean(currentRoute.filePath && bridgeSession.sessionFile &&
+              path.resolve(currentRoute.filePath) === path.resolve(bridgeSession.sessionFile));
+          if (!routeMatches) return;
 
-          const session = readSessionDetail(filePath);
-          currentRoute = { name: "sessionDetail", filePath };
-          sessionWatcher = watchSessionDetail(session, view.webview);
-          view.webview.postMessage({
-            command: "sessionFileReady",
-            filePath,
-            title: session.title,
-            messages: session.messages,
-            contextUsage: session.contextUsage,
-            warnings: session.warnings,
-          });
+          stopSessionWatcher();
+          const sessionFileChanged = Boolean(bridgeSession.sessionFile &&
+            (!currentRoute.filePath || path.resolve(currentRoute.filePath) !== path.resolve(bridgeSession.sessionFile)));
+          if (bridgeSession.sessionFile && sessionFileChanged) {
+            currentRoute = {
+              name: "sessionDetail",
+              filePath: bridgeSession.sessionFile,
+              bridgeId: bridgeSession.bridgeId,
+            };
+            void view.webview.postMessage({
+              command: "sessionFileReady",
+              filePath: bridgeSession.sessionFile,
+              title: bridgeSession.sessionName || path.basename(bridgeSession.sessionFile),
+              messages: bridgeSession.messages,
+              contextUsage: bridgeSession.contextUsage,
+              warnings: [],
+              playAssistantSound: bridgeSession.playCompletionSound === true,
+            });
+          } else {
+            currentRoute = { ...currentRoute, bridgeId: bridgeSession.bridgeId };
+            void view.webview.postMessage({
+              command: "replaceMessages",
+              messages: bridgeSession.messages,
+              contextUsage: bridgeSession.contextUsage,
+              warnings: [],
+              playAssistantSound: bridgeSession.playCompletionSound === true,
+            });
+          }
         };
+
+        const bridgeSessionSubscription = terminalSessions.onDidChangeSession(applyBridgeSession);
 
         const handleSendMessage = async (
           message: Extract<WebviewMessage, { command: "sendMessage" }>,
         ) => {
-          const result = await sendSessionMessage(
-            messageSessions,
-            String(message.filePath || ""),
-            String(message.text || ""),
-            String(message.providerCliArgs || ""),
-          );
-
-          if (result.sessionFilePath) {
-            attachSessionFileToCurrentDetail(result.sessionFilePath);
+          // Do not let fallback watcher updates clear the optimistic bubble while
+          // the terminal and bridge are being created.
+          stopSessionWatcher();
+          try {
+            const result = await terminalSessions.sendSessionMessage(
+              String(message.filePath || ""),
+              String(message.text || ""),
+              String(message.providerCliArgs || ""),
+              String(message.clientMessageId || crypto.randomUUID()),
+            );
+            if (currentRoute.name === "sessionDetail") {
+              currentRoute = {
+                ...currentRoute,
+                bridgeId: result.bridgeId,
+                filePath: result.sessionFilePath || currentRoute.filePath,
+              };
+            }
+            const bridgeSession = terminalSessions.getSession(result.bridgeId);
+            if (bridgeSession) applyBridgeSession(bridgeSession);
+          } catch (error) {
+            const messageText = error instanceof Error ? error.message : String(error);
+            void vscode.window.showErrorMessage(messageText);
           }
         };
 
@@ -484,6 +536,7 @@ export function activate(context: vscode.ExtensionContext): void {
         context.subscriptions.push({
           dispose() {
             stopSessionWatcher();
+            bridgeSessionSubscription.dispose();
             addToActiveQcodeInput = undefined;
           },
         });

@@ -144,6 +144,19 @@ export function renderSessionDetail(
   .session-message.role-user {
     border-right-color: var(--vscode-charts-blue, #3794ff);
   }
+  .session-message.delivery-failed {
+    border-color: var(--vscode-errorForeground, #f14c4c);
+  }
+  .retry-message {
+    margin-top: 8px;
+    padding: 2px 7px;
+    color: var(--vscode-button-foreground);
+    background: var(--vscode-button-background);
+    border: 0;
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+  }
   .session-message.role-assistant {
     border-right-color: var(--vscode-widget-border, transparent);
   }
@@ -288,7 +301,7 @@ ${messageRenderingStyles}
   <main class="detail">
     <header class="header">
       <button type="button" class="home-button" id="home-button" aria-label="Home" title="Home">←</button>
-      <div class="context-usage" id="context-usage" aria-label="Context window usage" title="Context usage unavailable">—</div>
+      <div class="context-usage" id="context-usage" aria-label="Context window usage and session cost" title="Context usage and session cost unavailable"><span class="context-usage-value">—%</span><span class="context-usage-value">$—</span></div>
       <button type="button" class="session-warning" id="session-warning" aria-label="Session warnings" title="Session warnings" hidden>⚠</button>
     </header>
     <section class="body">
@@ -452,7 +465,11 @@ ${messageRenderingScript}
         : message.role === 'user'
           ? 'role-user'
           : 'role-assistant';
-      article.className = 'session-message ' + roleClass;
+      article.className = 'session-message ' + roleClass +
+        (message.deliveryState === 'failed' ? ' delivery-failed' : '');
+      if (message.deliveryState === 'failed') {
+        article.title = 'Message delivery failed. Your text has been kept; submit it again to retry.';
+      }
 
       if (message.kind === 'thinking') {
         const label = document.createElement('div');
@@ -465,6 +482,21 @@ ${messageRenderingScript}
       qcodeMessageRendering.renderMessageTextElement(text, message);
 
       article.append(text);
+      if (message.deliveryState === 'failed' && message.clientMessageId) {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'retry-message';
+        retry.textContent = 'Retry';
+        retry.addEventListener('click', () => {
+          vscode.postMessage({
+            command: 'sendMessage',
+            filePath: form.dataset.filePath || '',
+            text: message.text || '',
+            clientMessageId: message.clientMessageId,
+          });
+        });
+        article.append(retry);
+      }
       return article;
     };
     const appendMessage = (message) => {
@@ -487,7 +519,7 @@ ${messageRenderingScript}
       if (isAssistantMessage(message)) playAssistantMessageSound();
       return !wasThinkingUpdate;
     };
-    const replaceMessages = (newMessages) => {
+    const replaceMessages = (newMessages, shouldPlayAssistantSound = true) => {
       if (!messages) return false;
       const shouldScroll = shouldScrollForReplacement(newMessages);
       const previousAssistantMessageCount = countAssistantMessages(renderedMessages);
@@ -498,7 +530,7 @@ ${messageRenderingScript}
         return false;
       }
       newMessages.forEach((message) => messages.append(renderMessageElement(message)));
-      if (countAssistantMessages(newMessages) > previousAssistantMessageCount) {
+      if (shouldPlayAssistantSound && countAssistantMessages(newMessages) > previousAssistantMessageCount) {
         playAssistantMessageSound();
       }
       return shouldScroll;
@@ -510,10 +542,18 @@ ${messageRenderingScript}
       if (numberValue >= 1000) return (numberValue / 1000).toFixed(numberValue >= 10000 ? 0 : 1) + 'K';
       return String(Math.round(numberValue));
     };
+    const readFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : undefined;
     const formatCost = (value) => {
-      const numberValue = Number(value || 0);
-      if (!Number.isFinite(numberValue) || numberValue <= 0) return '';
-      return '$' + numberValue.toFixed(numberValue < 0.01 ? 4 : numberValue < 1 ? 3 : 2);
+      const numberValue = readFiniteNumber(value);
+      if (numberValue === undefined || numberValue < 0) return undefined;
+      const decimals = numberValue > 0 && numberValue < 0.01
+        ? 4
+        : numberValue > 0 && numberValue < 1
+          ? 3
+          : 2;
+      return '$' + numberValue.toFixed(decimals);
     };
     const getContextUsageColorClass = (percent) => {
       if (!Number.isFinite(percent) || percent < 30) return '';
@@ -523,41 +563,42 @@ ${messageRenderingScript}
     const updateContextUsage = (usage) => {
       if (!contextUsage) return;
 
-      const used = Number(usage && usage.usedTokens);
-      const total = Number(usage && usage.contextWindow);
-      const rawPercent = Number.isFinite(used) && used >= 0 && Number.isFinite(total) && total > 0
-        ? (used / total) * 100
-        : NaN;
-      const hasPercent = Number.isFinite(rawPercent);
-
-      const details = [];
-      if (usage && usage.modelId) details.push(usage.modelId);
-      if (usage && usage.thinkingLevel) details.push('reasoning ' + usage.thinkingLevel);
+      const used = readFiniteNumber(usage && usage.usedTokens);
+      const total = readFiniteNumber(usage && usage.contextWindow);
+      const reportedPercent = readFiniteNumber(usage && usage.percent);
+      const rawPercent = reportedPercent !== undefined
+        ? reportedPercent
+        : used !== undefined && used >= 0 && total !== undefined && total > 0
+          ? (used / total) * 100
+          : undefined;
+      const hasPercent = rawPercent !== undefined && rawPercent >= 0;
       const cost = formatCost(usage && usage.sessionCost);
-      if (cost) details.push(cost);
-      const detailText = details.join(' · ');
-      const detailSuffix = detailText ? ' · ' + detailText : '';
 
-      if (hasPercent) {
-        const title = 'Context window used: ' + rawPercent.toFixed(1) + '% (' + formatTokens(used) + ' / ' + formatTokens(total) + ' tokens' + detailSuffix + ')';
-        const percentElement = document.createElement('span');
-        percentElement.className = 'context-usage-value' + getContextUsageColorClass(rawPercent);
-        percentElement.textContent = rawPercent.toFixed(1) + '%';
-        contextUsage.replaceChildren(percentElement);
-        if (cost) {
-          const costElement = document.createElement('span');
-          costElement.className = 'context-usage-value';
-          costElement.textContent = cost;
-          contextUsage.append(costElement);
-        }
-        contextUsage.title = title;
-        contextUsage.setAttribute('aria-valuetext', title);
-      } else {
-        const title = 'Context usage unavailable' + (detailText ? ' (' + detailText + ')' : '') + '. Waiting for assistant token usage and context window metadata.';
-        contextUsage.textContent = '—';
-        contextUsage.title = title;
-        contextUsage.setAttribute('aria-valuetext', title);
-      }
+      const percentElement = document.createElement('span');
+      percentElement.className = 'context-usage-value' +
+        (hasPercent ? getContextUsageColorClass(rawPercent) : '');
+      percentElement.textContent = hasPercent ? rawPercent.toFixed(1) + '%' : '—%';
+      const costElement = document.createElement('span');
+      costElement.className = 'context-usage-value';
+      costElement.textContent = cost || '$—';
+      contextUsage.replaceChildren(percentElement, costElement);
+
+      const metadata = [];
+      if (usage && usage.modelId) metadata.push(usage.modelId);
+      if (usage && usage.thinkingLevel) metadata.push('reasoning ' + usage.thinkingLevel);
+      const tokenDetail = used !== undefined && total !== undefined && total > 0
+        ? ' (' + formatTokens(used) + ' / ' + formatTokens(total) + ' tokens)'
+        : '';
+      const titleParts = [
+        hasPercent
+          ? 'Context window used: ' + rawPercent.toFixed(1) + '%' + tokenDetail
+          : 'Context usage unavailable',
+        cost ? 'Session cost: ' + cost : 'Session cost unavailable',
+      ];
+      if (metadata.length) titleParts.push(metadata.join(' · '));
+      const title = titleParts.join(' · ');
+      contextUsage.title = title;
+      contextUsage.setAttribute('aria-valuetext', title);
     };
     const hideTypeahead = () => {
       completionState = null;
@@ -793,7 +834,10 @@ ${messageRenderingScript}
 
       if (data.command === 'sessionFileReady') {
         form.dataset.filePath = data.filePath || '';
-        const shouldScroll = replaceMessages(Array.isArray(data.messages) ? data.messages : []);
+        const shouldScroll = replaceMessages(
+          Array.isArray(data.messages) ? data.messages : [],
+          data.playAssistantSound !== false,
+        );
         updateContextUsage(data.contextUsage);
         updateSessionWarnings(data.warnings);
         if (shouldScroll) requestAnimationFrame(scrollLastMessageTop);
@@ -801,7 +845,7 @@ ${messageRenderingScript}
       }
 
       if (data.command === 'replaceMessages' && Array.isArray(data.messages)) {
-        const shouldScroll = replaceMessages(data.messages);
+        const shouldScroll = replaceMessages(data.messages, data.playAssistantSound !== false);
         updateContextUsage(data.contextUsage);
         updateSessionWarnings(data.warnings);
         if (shouldScroll) requestAnimationFrame(scrollLastMessageTop);
@@ -832,6 +876,7 @@ ${messageRenderingScript}
       if (!input.value) return;
 
       const sentText = input.value;
+      const clientMessageId = globalThis.crypto.randomUUID();
       const providerCliArgs = getSelectedProviderCliArgs();
       hideTypeahead();
       vscode.postMessage({
@@ -839,9 +884,16 @@ ${messageRenderingScript}
         filePath: form.dataset.filePath || '',
         text: sentText,
         providerCliArgs,
+        clientMessageId,
       });
       removeDraftProviderOptions();
-      if (appendMessage({ role: 'user', kind: 'message', text: sentText })) {
+      if (appendMessage({
+        role: 'user',
+        kind: 'message',
+        text: sentText,
+        clientMessageId,
+        deliveryState: 'pending',
+      })) {
         requestAnimationFrame(scrollLastMessageTop);
       }
       input.value = '';
