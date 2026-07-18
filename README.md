@@ -103,7 +103,13 @@ https://github.com/user-attachments/assets/378e3deb-4df9-46ee-8145-32276db4d62e
 
 **How does the Pi bridge work?**
 
-qcode starts an ordinary, visible Pi terminal and loads its dependency-free bridge with `pi -e`. The terminal's Pi process remains the sole owner of the session, so you can click the terminal and use the Pi TUI at any time. The bridge only transports structured events and user messages; it does not add tools, prompts, or model context.
+qcode starts an ordinary, visible Pi terminal and loads its dependency-free bridge with `pi -e`. The terminal's Pi process remains the sole owner of the session, so you can click the terminal and use the Pi TUI at any time. The bridge only transports structured events and user messages; it does not add tools, prompts, or model context. It costs 0 tokens.
+
+**Does it work on windows?**
+
+Maybe? It's untested, but it might work. Windows could be configured in a million ways. The most likely happy path is native Windows with VS Code's default integrated terminal set to PowerShell (PowerShell 7 / `pwsh` preferred). Install and authenticate Pi, then confirm that `pi` runs successfully in that same VS Code terminal before using qcode.
+
+If you use WSL, open the project through VS Code Remote - WSL instead of selecting `wsl.exe` as the terminal profile in a local Windows window. Other shell configurations, including Git Bash, may work but have not been tested.
 
 ## Thanks & Shoutouts
 
