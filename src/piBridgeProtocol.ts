@@ -57,6 +57,7 @@ export interface BridgeHelloEvent extends BridgeEventBase, BridgeSessionState {
   instanceId: string;
   pid: number;
   cwd: string;
+  userInputWaits?: BridgeUserInputWait[];
 }
 
 export interface BridgeSessionStateEvent extends BridgeEventBase {
@@ -76,6 +77,15 @@ export interface BridgeUserInputEvent extends BridgeEventBase {
   text: string;
   source: string;
   clientMessageId?: string;
+}
+
+export interface BridgeUserInputWait {
+  waitId: string;
+  message?: string;
+}
+
+export interface BridgeUserInputWaitEvent extends BridgeEventBase, BridgeUserInputWait {
+  type: "user_input_wait_start" | "user_input_wait_end";
 }
 
 export interface BridgeLifecycleEvent extends BridgeEventBase {
@@ -117,6 +127,7 @@ export type BridgeToQcodeMessage =
   | BridgeSessionStateEvent
   | BridgeSessionSnapshotEvent
   | BridgeUserInputEvent
+  | BridgeUserInputWaitEvent
   | BridgeLifecycleEvent
   | BridgeMessageEvent
   | BridgeToolEvent
@@ -268,8 +279,9 @@ export function validateBridgeMessage(value: unknown):
   }
 
   const simpleTypes = new Set([
-    "hello", "session_state", "session_snapshot", "user_input", "agent_start", "agent_settled",
-    "session_compact", "message_start", "message_end", "tool_execution_start",
+    "hello", "session_state", "session_snapshot", "user_input", "user_input_wait_start",
+    "user_input_wait_end", "agent_start", "agent_settled", "session_compact", "message_start",
+    "message_end", "tool_execution_start",
     "tool_execution_end", "session_shutdown", "bridge_error", "command_ack",
   ]);
   if (!simpleTypes.has(record.type)) {
@@ -277,7 +289,10 @@ export function validateBridgeMessage(value: unknown):
   }
   if (record.type === "hello" && (
     typeof record.instanceId !== "string" || !Number.isInteger(record.pid) ||
-    typeof record.cwd !== "string" || typeof record.idle !== "boolean"
+    typeof record.cwd !== "string" || typeof record.idle !== "boolean" ||
+    (record.userInputWaits !== undefined && (
+      !Array.isArray(record.userInputWaits) || !record.userInputWaits.every(isUserInputWait)
+    ))
   )) return invalid("invalid_message", "Bridge hello event is incomplete.");
   if (record.type === "session_state" && (
     !readRecord(record.state) || typeof readRecord(record.state)?.idle !== "boolean"
@@ -293,6 +308,9 @@ export function validateBridgeMessage(value: unknown):
     typeof record.text !== "string" || typeof record.source !== "string" ||
     (record.clientMessageId !== undefined && typeof record.clientMessageId !== "string")
   )) return invalid("invalid_message", "Bridge user input event is invalid.");
+  if ((record.type === "user_input_wait_start" || record.type === "user_input_wait_end") &&
+    !isUserInputWait(record)
+  ) return invalid("invalid_message", "Bridge user input wait event is invalid.");
   if ((record.type === "message_start" || record.type === "message_end") && !readRecord(record.message)) {
     return invalid("invalid_message", "Bridge message event has no message.");
   }
@@ -361,6 +379,14 @@ export function readBridgeRegistration(value: unknown): BridgeRegistration | und
     typeof record.cwd !== "string"
   ) return undefined;
   return record as unknown as BridgeRegistration;
+}
+
+function isUserInputWait(value: unknown): boolean {
+  const record = readRecord(value);
+  return Boolean(
+    record && typeof record.waitId === "string" && record.waitId &&
+    (record.message === undefined || typeof record.message === "string"),
+  );
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {

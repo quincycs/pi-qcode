@@ -201,6 +201,8 @@ export function activate(context: vscode.ExtensionContext): void {
               assistantSoundEnabled: settings.assistantSoundEnabled,
               assistantSoundUri: getAssistantSoundWebviewUri(settings),
               cspSource: view.webview.cspSource,
+              waitingForUser: bridgeSession?.waitingForUser,
+              waitingForUserMessage: bridgeSession?.waitingForUserMessage,
             },
           );
           if (!hasBridgeBaseline) sessionWatcher = watchSessionDetail(session, view.webview);
@@ -251,6 +253,8 @@ export function activate(context: vscode.ExtensionContext): void {
               messages: bridgeSession.messages,
               contextUsage: bridgeSession.contextUsage,
               warnings: [],
+              waitingForUser: bridgeSession.waitingForUser,
+              waitingForUserMessage: bridgeSession.waitingForUserMessage,
               playAssistantSound: bridgeSession.playCompletionSound === true,
             });
           } else {
@@ -260,6 +264,8 @@ export function activate(context: vscode.ExtensionContext): void {
               messages: bridgeSession.messages,
               contextUsage: bridgeSession.contextUsage,
               warnings: [],
+              waitingForUser: bridgeSession.waitingForUser,
+              waitingForUserMessage: bridgeSession.waitingForUserMessage,
               playAssistantSound: bridgeSession.playCompletionSound === true,
             });
           }

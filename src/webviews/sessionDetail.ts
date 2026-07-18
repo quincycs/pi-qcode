@@ -19,6 +19,8 @@ export function renderSessionDetail(
     assistantSoundEnabled?: boolean;
     assistantSoundUri?: string;
     cspSource?: string;
+    waitingForUser?: boolean;
+    waitingForUserMessage?: string;
   } = {},
 ): string {
   const isDraftSession = !filePath && !session.filePath && !session.error;
@@ -165,6 +167,12 @@ export function renderSessionDetail(
     background: transparent;
     border-style: dashed;
     border-right-color: var(--vscode-descriptionForeground);
+  }
+  .session-message.role-thinking.role-waiting {
+    color: var(--vscode-foreground);
+    background: var(--vscode-inputValidation-warningBackground, var(--vscode-input-background));
+    border-color: var(--vscode-inputValidation-warningBorder, var(--vscode-charts-yellow, #cca700));
+    border-style: solid;
   }
   .thinking-label {
     margin-bottom: 6px;
@@ -337,6 +345,7 @@ ${messageRenderingStyles}
     const providerOptions = ${toScriptJson(providerOptions)};
     const lastUsedProviderNickname = ${toScriptJson(lastUsedProviderNickname)};
     let sessionWarnings = [];
+    let waitingForUserActive = false;
 
     const readSessionWarnings = (warnings) => {
       if (!Array.isArray(warnings)) return [];
@@ -352,6 +361,61 @@ ${messageRenderingStyles}
         : sessionWarnings.length + ' session warnings';
       sessionWarning.title = title;
       sessionWarning.setAttribute('aria-label', title);
+    };
+
+    const updateUserInputWait = (waiting, message) => {
+      const startedWaiting = waiting && !waitingForUserActive;
+      waitingForUserActive = waiting;
+      if (startedWaiting) playNotificationSound();
+      if (!messages) return;
+      const activeWait = messages.querySelector('.session-message[data-user-input-wait="true"]');
+      if (!waiting) {
+        if (!activeWait) return;
+        if (activeWait.dataset.syntheticUserInputWait === 'true') {
+          activeWait.remove();
+          if (!messages.children.length) renderEmptyMessages();
+          return;
+        }
+        activeWait.classList.remove('role-waiting');
+        activeWait.removeAttribute('role');
+        activeWait.removeAttribute('aria-live');
+        activeWait.querySelector('.thinking-label').textContent = activeWait.dataset.originalWaitLabel || 'Thinking...';
+        activeWait.querySelector('.message-text').textContent = activeWait.dataset.originalWaitText || '';
+        delete activeWait.dataset.userInputWait;
+        delete activeWait.dataset.originalWaitLabel;
+        delete activeWait.dataset.originalWaitText;
+        return;
+      }
+
+      let article = activeWait;
+      if (!article) {
+        article = messages.querySelector('.session-message.role-thinking:last-child');
+      }
+      if (!article) {
+        messages.querySelector('.empty-messages')?.remove();
+        article = document.createElement('article');
+        article.className = 'session-message role-thinking';
+        article.dataset.syntheticUserInputWait = 'true';
+        const label = document.createElement('div');
+        label.className = 'thinking-label';
+        const text = document.createElement('div');
+        text.className = 'message-text';
+        article.append(label, text);
+        messages.append(article);
+      }
+
+      const label = article.querySelector('.thinking-label');
+      const text = article.querySelector('.message-text');
+      if (article.dataset.userInputWait !== 'true') {
+        article.dataset.originalWaitLabel = label?.textContent || 'Thinking...';
+        article.dataset.originalWaitText = text?.textContent || '';
+      }
+      article.dataset.userInputWait = 'true';
+      article.classList.add('role-waiting');
+      article.setAttribute('role', 'status');
+      article.setAttribute('aria-live', 'polite');
+      if (label) label.textContent = 'Waiting for user input... see pi terminal';
+      if (text) text.textContent = message || 'Open the Pi terminal to continue.';
     };
 
     const assistantSoundEnabled = ${options.assistantSoundEnabled === true ? "true" : "false"};
@@ -389,7 +453,7 @@ ${messageRenderingStyles}
       }
       loadNotificationAudioBuffer();
     };
-    const playAssistantMessageSound = () => {
+    const playNotificationSound = () => {
       if (!assistantSoundEnabled) return;
       const audioContext = getNotificationAudioContext();
       if (!audioContext) return;
@@ -516,7 +580,7 @@ ${messageRenderingScript}
 
       messages.append(renderMessageElement(message));
       renderedMessages.push(message);
-      if (isAssistantMessage(message)) playAssistantMessageSound();
+      if (isAssistantMessage(message)) playNotificationSound();
       return !wasThinkingUpdate;
     };
     const replaceMessages = (newMessages, shouldPlayAssistantSound = true) => {
@@ -531,7 +595,7 @@ ${messageRenderingScript}
       }
       newMessages.forEach((message) => messages.append(renderMessageElement(message)));
       if (shouldPlayAssistantSound && countAssistantMessages(newMessages) > previousAssistantMessageCount) {
-        playAssistantMessageSound();
+        playNotificationSound();
       }
       return shouldScroll;
     };
@@ -756,6 +820,10 @@ ${messageRenderingScript}
     qcodeMessageRendering.renderExistingMessages();
     updateContextUsage(${toScriptJson(session.contextUsage)});
     updateSessionWarnings(${toScriptJson(session.warnings ?? [])});
+    updateUserInputWait(
+      ${options.waitingForUser === true ? "true" : "false"},
+      ${toScriptString(options.waitingForUserMessage ?? "")},
+    );
     if (initialInput) addToInput(initialInput);
 
     document.getElementById('home-button').addEventListener('click', () => {
@@ -840,6 +908,7 @@ ${messageRenderingScript}
         );
         updateContextUsage(data.contextUsage);
         updateSessionWarnings(data.warnings);
+        updateUserInputWait(data.waitingForUser === true, data.waitingForUserMessage);
         if (shouldScroll) requestAnimationFrame(scrollLastMessageTop);
         return;
       }
@@ -848,6 +917,7 @@ ${messageRenderingScript}
         const shouldScroll = replaceMessages(data.messages, data.playAssistantSound !== false);
         updateContextUsage(data.contextUsage);
         updateSessionWarnings(data.warnings);
+        updateUserInputWait(data.waitingForUser === true, data.waitingForUserMessage);
         if (shouldScroll) requestAnimationFrame(scrollLastMessageTop);
         return;
       }

@@ -105,6 +105,34 @@ https://github.com/user-attachments/assets/378e3deb-4df9-46ee-8145-32276db4d62e
 
 qcode starts an ordinary, visible Pi terminal and loads its dependency-free bridge with `pi -e`. The terminal's Pi process remains the sole owner of the session, so you can click the terminal and use the Pi TUI at any time. The bridge only transports structured events and user messages; it does not add tools, prompts, or model context. It costs 0 tokens.
 
+**How can a Pi extension tell qcode that the terminal is waiting for user input?**
+
+Pi does not currently expose terminal-dialog lifecycle events. An extension that opens a blocking `ctx.ui` prompt can publish paired events on Pi's shared `pi-lifecycle` event channel. qcode then displays a notice telling the user to open the Pi terminal.
+
+```ts
+const waitId = `my-extension:${event.toolCallId}`;
+
+pi.events.emit("pi-lifecycle", {
+  version: 1,
+  event: "user_input_wait_start",
+  waitId,
+  message: "Approval is required.", // Optional; do not include sensitive data.
+});
+
+try {
+  const choice = await ctx.ui.select("Continue?", ["Yes", "No"]);
+  // Handle the choice.
+} finally {
+  pi.events.emit("pi-lifecycle", {
+    version: 1,
+    event: "user_input_wait_end",
+    waitId,
+  });
+}
+```
+
+Each wait must have a non-empty ID that is unique among currently open prompts. Always emit the matching `user_input_wait_end` from a `finally` block so Escape, errors, and cancellation clear the notice. These events are process-local and add no model context or token cost. The qcode bridge retains currently open waits in memory so a bridge socket reconnection still reports the correct state.
+
 **Does it work on windows?**
 
 Maybe? It's untested, but it might work. Windows could be configured in a million ways. The most likely happy path is native Windows with VS Code's default integrated terminal set to PowerShell (PowerShell 7 / `pwsh` preferred). Install and authenticate Pi, then confirm that `pi` runs successfully in that same VS Code terminal before using qcode.

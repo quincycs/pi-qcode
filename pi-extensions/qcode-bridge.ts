@@ -119,6 +119,7 @@ export default function qcodeBridge(pi: ExtensionAPI): void {
   let trackedSessionCost: number | undefined;
   let registrationWrites: Promise<void> = Promise.resolve();
   const correlatedInputs: CorrelatedInput[] = [];
+  const activeUserInputWaits = new Map<string, { waitId: string; message?: string }>();
   const pendingUserInputEvents: Array<{
     text: string;
     source: string;
@@ -342,6 +343,7 @@ export default function qcodeBridge(pi: ExtensionAPI): void {
       instanceId,
       pid: process.pid,
       cwd: ctx.cwd,
+      userInputWaits: [...activeUserInputWaits.values()],
       ...sessionState(ctx),
     });
     // Replay raw inputs that happened while qcode was disconnected before the
@@ -525,6 +527,7 @@ export default function qcodeBridge(pi: ExtensionAPI): void {
     currentRunStartedAt = undefined;
     trackedSessionCost = calculateSessionCost(ctx);
     correlatedInputs.length = 0;
+    activeUserInputWaits.clear();
     initialInputEligible =
       event.reason === "startup" &&
       Boolean(initialClientMessageId) &&
@@ -576,6 +579,37 @@ export default function qcodeBridge(pi: ExtensionAPI): void {
     await writeRegistration(ctx);
   });
 
+  pi.events.on("pi-lifecycle", (value) => {
+    const event = readRecord(value);
+    const eventName = stringValue(event?.event);
+    const waitId = stringValue(event?.waitId);
+    if (
+      event?.version !== 1 ||
+      !waitId ||
+      (eventName !== "user_input_wait_start" &&
+        eventName !== "user_input_wait_end")
+    ) return;
+
+    if (eventName === "user_input_wait_start") {
+      const message = truncateText(stringValue(event.message) || "", 4 * 1024) || undefined;
+      activeUserInputWaits.set(waitId, { waitId, ...(message ? { message } : {}) });
+      publish({
+        ...base("user_input_wait_start"),
+        waitId,
+        ...(message ? { message } : {}),
+      });
+      return;
+    }
+
+    const activeWait = activeUserInputWaits.get(waitId);
+    activeUserInputWaits.delete(waitId);
+    publish({
+      ...base("user_input_wait_end"),
+      waitId,
+      ...(activeWait?.message ? { message: activeWait.message } : {}),
+    });
+  });
+
   pi.on("input", (event) => {
     let clientMessageId: string | undefined;
     if (initialInputEligible && initialClientMessageId) {
@@ -625,6 +659,7 @@ export default function qcodeBridge(pi: ExtensionAPI): void {
     publishState(ctx);
   });
   pi.on("agent_settled", (_event, ctx) => {
+    activeUserInputWaits.clear();
     const runId = currentRunId;
     const elapsedMs =
       currentRunStartedAt === undefined
@@ -690,6 +725,7 @@ export default function qcodeBridge(pi: ExtensionAPI): void {
     });
     currentRunId = undefined;
     currentRunStartedAt = undefined;
+    activeUserInputWaits.clear();
     publish({ ...base("session_shutdown"), reason: event.reason });
     stopped = true;
     currentContext = undefined;

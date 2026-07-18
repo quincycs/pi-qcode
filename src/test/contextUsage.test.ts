@@ -38,3 +38,19 @@ test("renders persistent placeholders for context percentage and cost", () => {
   assert.match(html, /reportedPercent/);
   assert.match(html, /usage && usage\.percent/);
 });
+
+test("transitions the thinking block into a terminal user-input warning", () => {
+  const html = renderSessionDetail("", "nonce", {
+    title: "New Session",
+    messages: [{ role: "thinking", kind: "thinking", text: "bash: 1" }],
+  }, {
+    waitingForUser: true,
+    waitingForUserMessage: "Approval is required.",
+  });
+
+  assert.match(html, /role-thinking\.role-waiting/);
+  assert.match(html, /Waiting for you\.\.\./);
+  assert.match(html, /if \(startedWaiting\) playNotificationSound\(\)/);
+  assert.match(html, /Approval is required\./);
+  assert.doesNotMatch(html, /id="user-input-wait"/);
+});

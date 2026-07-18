@@ -77,4 +77,36 @@ test("validates authentication, versions, and message limits", () => {
     clientMessageId: "client-1",
   });
   assert.equal(userInput.ok, true);
+
+  const waitStart = validateBridgeMessage({
+    protocolVersion: PI_BRIDGE_PROTOCOL_VERSION,
+    type: "user_input_wait_start",
+    bridgeId: "bridge-1",
+    sequence: 2,
+    waitId: "permission:tool-1",
+    message: "Approval is required.",
+  });
+  assert.equal(waitStart.ok, true);
+
+  const helloWithWait = validateBridgeMessage({
+    protocolVersion: PI_BRIDGE_PROTOCOL_VERSION,
+    type: "hello",
+    bridgeId: "bridge-1",
+    sequence: 3,
+    instanceId: "instance-1",
+    pid: 123,
+    cwd: "/workspace",
+    idle: false,
+    userInputWaits: [{ waitId: "permission:tool-1" }],
+  });
+  assert.equal(helloWithWait.ok, true);
+
+  const invalidWait = validateBridgeMessage({
+    protocolVersion: PI_BRIDGE_PROTOCOL_VERSION,
+    type: "user_input_wait_end",
+    bridgeId: "bridge-1",
+    sequence: 4,
+    waitId: "",
+  });
+  assert.equal(invalidWait.ok, false);
 });

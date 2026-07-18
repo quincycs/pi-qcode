@@ -17,6 +17,8 @@ import {
   type BridgeToQcodeMessage,
   type BridgeToolEvent,
   type BridgeUserInputEvent,
+  type BridgeUserInputWait,
+  type BridgeUserInputWaitEvent,
   encodeBridgeRecord,
   readBridgeRegistration,
   validateBridgeMessage,
@@ -75,6 +77,7 @@ interface ManagedSession {
   optimisticUserMessages: OptimisticUserMessage[];
   pendingAssistant?: SessionMessage;
   thinkingCounts: Record<string, number>;
+  userInputWaits: Map<string, BridgeUserInputWait>;
   sessionCost?: number;
   lastSequence: number;
   pendingCommands: Map<string, PendingCommand>;
@@ -91,6 +94,8 @@ export interface PiTerminalSessionView {
   messages: SessionMessage[];
   contextUsage?: ContextUsage;
   terminalExited: boolean;
+  waitingForUser: boolean;
+  waitingForUserMessage?: string;
   playCompletionSound?: boolean;
   actionError?: string;
 }
@@ -245,6 +250,7 @@ export class PiTerminalSessions implements vscode.Disposable {
       visibleMessages: initialMessages,
       optimisticUserMessages: [],
       thinkingCounts: {},
+      userInputWaits: new Map(),
       sessionCost: undefined,
       lastSequence: 0,
       pendingCommands: new Map(),
@@ -381,6 +387,7 @@ export class PiTerminalSessions implements vscode.Disposable {
               visibleMessages: [],
               optimisticUserMessages: [],
               thinkingCounts: {},
+              userInputWaits: new Map(),
               sessionCost: undefined,
               lastSequence: 0,
               pendingCommands: new Map(),
@@ -561,6 +568,14 @@ export class PiTerminalSessions implements vscode.Disposable {
       if (session.hasSnapshot) this.emit(session);
       return;
     }
+    if (
+      message.type === "user_input_wait_start" ||
+      message.type === "user_input_wait_end"
+    ) {
+      this.applyUserInputWait(session, message);
+      this.emit(session);
+      return;
+    }
     if (message.type === "agent_start") {
       removeThinking(session.visibleMessages);
       session.thinkingCounts = {};
@@ -582,6 +597,7 @@ export class PiTerminalSessions implements vscode.Disposable {
       return;
     }
     if (message.type === "agent_settled") {
+      session.userInputWaits.clear();
       finalizeAssistant(session);
       this.emit(session, undefined, true);
       return;
@@ -591,6 +607,7 @@ export class PiTerminalSessions implements vscode.Disposable {
       return;
     }
     if (message.type === "session_shutdown") {
+      session.userInputWaits.clear();
       session.status = "reconnecting";
       this.emit(
         session,
@@ -623,6 +640,9 @@ export class PiTerminalSessions implements vscode.Disposable {
     session.authenticated = true;
     session.status = "connected";
     session.terminalExited = false;
+    session.userInputWaits = new Map(
+      (hello.userInputWaits || []).map((wait) => [wait.waitId, wait]),
+    );
     session.state = {
       sessionId: hello.sessionId,
       sessionFile: hello.sessionFile,
@@ -779,6 +799,20 @@ export class PiTerminalSessions implements vscode.Disposable {
     session.thinkingCounts[toolName] =
       (session.thinkingCounts[toolName] || 0) + 1;
     upsertThinking(session);
+  }
+
+  private applyUserInputWait(
+    session: ManagedSession,
+    event: BridgeUserInputWaitEvent,
+  ): void {
+    if (event.type === "user_input_wait_start") {
+      session.userInputWaits.set(event.waitId, {
+        waitId: event.waitId,
+        ...(event.message ? { message: event.message } : {}),
+      });
+    } else {
+      session.userInputWaits.delete(event.waitId);
+    }
   }
 
   private setVisibleDeliveryState(
@@ -944,6 +978,7 @@ export class PiTerminalSessions implements vscode.Disposable {
     if (!session) return;
     session.terminalExited = true;
     session.status = "terminal_exited";
+    session.userInputWaits.clear();
     if (session.startupTimer) {
       clearTimeout(session.startupTimer);
       session.startupTimer = undefined;
@@ -1020,6 +1055,10 @@ export class PiTerminalSessions implements vscode.Disposable {
             }
           : undefined,
       terminalExited: session.terminalExited,
+      waitingForUser: session.userInputWaits.size > 0,
+      waitingForUserMessage: [...session.userInputWaits.values()]
+        .map((wait) => wait.message)
+        .find((message): message is string => Boolean(message)),
     };
   }
 }
