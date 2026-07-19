@@ -520,22 +520,7 @@ ${messageRenderingStyles}
     const countAssistantMessages = (messageList) => Array.isArray(messageList)
       ? messageList.filter(isAssistantMessage).length
       : 0;
-    const findLastAssistantMessage = (messageList) => Array.isArray(messageList)
-      ? messageList.findLast(isAssistantMessage)
-      : undefined;
-    const readMessageTimestamp = (message) => {
-      const value = message && message.timestamp;
-      if (typeof value === 'number' && Number.isFinite(value)) return value;
-      if (typeof value !== 'string' || !value.trim()) return undefined;
-      const timestamp = Date.parse(value);
-      return Number.isFinite(timestamp) ? timestamp : undefined;
-    };
-    const initialLastAssistant = findLastAssistantMessage(renderedMessages);
-    let lastAssistantMessageAt = initialLastAssistant
-      ? readMessageTimestamp(initialLastAssistant) ?? Date.now()
-      : undefined;
     let thinkingStartedAt = undefined;
-    let thinkingUpdatedAt = undefined;
     let thinkingElapsedTimer = undefined;
     const formatElapsedTime = (elapsedMs) => {
       const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
@@ -559,50 +544,22 @@ ${messageRenderingStyles}
       const article = messages && messages.querySelector('.session-message.role-thinking:not(.role-waiting):last-child');
       const elapsed = article && article.querySelector('.thinking-elapsed');
       if (!elapsed) return;
-      const startedAt = thinkingUpdatedAt ?? lastAssistantMessageAt ?? thinkingStartedAt ?? Date.now();
-      elapsed.textContent = formatElapsedTime(Date.now() - startedAt);
-      elapsed.title = thinkingUpdatedAt !== undefined
-        ? 'Time elapsed since the last thinking update'
-        : lastAssistantMessageAt === undefined
-          ? 'Time elapsed while thinking'
-          : 'Time elapsed since the last assistant message';
+      elapsed.textContent = formatElapsedTime(Date.now() - (thinkingStartedAt ?? Date.now()));
+      elapsed.title = 'Time elapsed while thinking';
     };
     const syncThinkingElapsedTimer = () => {
       const thinking = messages && messages.querySelector('.session-message.role-thinking:last-child');
-      if (!thinking) {
-        thinkingStartedAt = undefined;
-        thinkingUpdatedAt = undefined;
-      } else if (thinkingStartedAt === undefined) {
-        thinkingStartedAt = Date.now();
-      }
-
       const shouldRun = Boolean(thinking && !thinking.classList.contains('role-waiting'));
       if (!shouldRun) {
+        thinkingStartedAt = undefined;
         if (thinkingElapsedTimer !== undefined) window.clearInterval(thinkingElapsedTimer);
         thinkingElapsedTimer = undefined;
         return;
       }
+      if (thinkingStartedAt === undefined) thinkingStartedAt = Date.now();
       updateThinkingElapsed();
       if (thinkingElapsedTimer === undefined) {
         thinkingElapsedTimer = window.setInterval(updateThinkingElapsed, 1000);
-      }
-    };
-    const updateLastAssistantMessageAt = (newMessages) => {
-      const previousAssistant = findLastAssistantMessage(renderedMessages);
-      const nextAssistant = findLastAssistantMessage(newMessages);
-      if (!nextAssistant) {
-        lastAssistantMessageAt = undefined;
-        return;
-      }
-      const timestamp = readMessageTimestamp(nextAssistant);
-      if (timestamp !== undefined) {
-        lastAssistantMessageAt = timestamp;
-        return;
-      }
-      if (!previousAssistant ||
-          countAssistantMessages(newMessages) > countAssistantMessages(renderedMessages) ||
-          previousAssistant.text !== nextAssistant.text) {
-        lastAssistantMessageAt = Date.now();
       }
     };
     const thinkingInfoSignature = (message) => JSON.stringify([
@@ -615,7 +572,7 @@ ${messageRenderingStyles}
       thinkingInfoSignature(previousMessage) !== thinkingInfoSignature(nextMessage);
     const resetThinkingElapsedIfChanged = (previousMessage, nextMessage) => {
       if (hasThinkingInfoChanged(previousMessage, nextMessage)) {
-        thinkingUpdatedAt = Date.now();
+        thinkingStartedAt = Date.now();
       }
     };
     const messageRenderSlot = (message) => {
@@ -692,10 +649,7 @@ ${messageRenderingScript}
 
       messages.append(renderMessageElement(message));
       renderedMessages.push(message);
-      if (isAssistantMessage(message)) {
-        lastAssistantMessageAt = readMessageTimestamp(message) ?? Date.now();
-        playNotificationSound();
-      }
+      if (isAssistantMessage(message)) playNotificationSound();
       syncThinkingElapsedTimer();
       return !wasThinkingUpdate;
     };
@@ -706,7 +660,6 @@ ${messageRenderingScript}
       const previousThinking = renderedMessages[renderedMessages.length - 1];
       const nextThinking = newMessages[newMessages.length - 1];
       resetThinkingElapsedIfChanged(previousThinking, nextThinking);
-      updateLastAssistantMessageAt(newMessages);
       messages.replaceChildren();
       renderedMessages.splice(0, renderedMessages.length, ...newMessages);
       if (!newMessages.length) {
