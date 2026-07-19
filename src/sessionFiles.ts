@@ -23,6 +23,7 @@ export interface SessionMessage {
   text: string;
   kind?: "message" | "thinking";
   counts?: Record<string, number>;
+  timestamp?: number;
   /** Present only for qcode's local optimistic outbox. */
   clientMessageId?: string;
   deliveryState?: "pending" | "accepted" | "correlated" | "failed";
@@ -850,7 +851,18 @@ function readRenderableSessionMessage(
     role,
     text,
     kind: "message",
+    timestamp: readMessageTimestamp(message.timestamp, entry.timestamp),
   };
+}
+
+function readMessageTimestamp(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "string" || !value.trim()) continue;
+    const timestamp = Date.parse(value);
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+  return undefined;
 }
 
 function readAssistantErrorMessage(

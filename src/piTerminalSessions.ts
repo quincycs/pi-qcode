@@ -1144,7 +1144,21 @@ function readAssistantMessage(
       ? message.errorMessage.trim()
       : "";
   const text = error || readMessageText(message);
-  return text ? { role: "assistant", kind: "message", text } : undefined;
+  if (!text) return undefined;
+  const timestamp = readBridgeMessageTimestamp(message.timestamp);
+  return {
+    role: "assistant",
+    kind: "message",
+    text,
+    ...(timestamp !== undefined ? { timestamp } : {}),
+  };
+}
+
+function readBridgeMessageTimestamp(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
 function readMessageText(message: Record<string, unknown> | undefined): string {

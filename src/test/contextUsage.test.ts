@@ -39,6 +39,27 @@ test("renders persistent placeholders for context percentage and cost", () => {
   assert.match(html, /usage && usage\.percent/);
 });
 
+test("renders a live elapsed timer in the thinking block", () => {
+  const timestamp = Date.parse("2026-01-01T00:00:00Z");
+  const html = renderSessionDetail("/tmp/session.jsonl", "nonce", {
+    title: "Session",
+    filePath: "/tmp/session.jsonl",
+    messages: [
+      { role: "assistant", kind: "message", text: "Previous", timestamp },
+      { role: "thinking", kind: "thinking", text: "bash: 1" },
+    ],
+  });
+
+  assert.match(html, /class="thinking-elapsed"/);
+  assert.match(html, /Time elapsed since the last assistant message/);
+  assert.match(html, /window\.setInterval\(updateThinkingElapsed, 1000\)/);
+  assert.match(html, /Time elapsed since the last thinking update/);
+  assert.match(html, /resetThinkingElapsedIfChanged\(previousThinking, message\)/);
+  assert.match(html, /resetThinkingElapsedIfChanged\(previousThinking, nextThinking\)/);
+  assert.match(html, /thinkingUpdatedAt = Date\.now\(\)/);
+  assert.match(html, new RegExp(String(timestamp)));
+});
+
 test("transitions the thinking block into a terminal user-input warning", () => {
   const html = renderSessionDetail("", "nonce", {
     title: "New Session",

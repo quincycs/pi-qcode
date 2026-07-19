@@ -175,11 +175,20 @@ export function renderSessionDetail(
     border-style: solid;
   }
   .thinking-label {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
     margin-bottom: 6px;
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.07em;
     text-transform: uppercase;
+  }
+  .thinking-elapsed {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: normal;
   }
 ${messageRenderingStyles}
   .draft-provider-options {
@@ -374,16 +383,18 @@ ${messageRenderingStyles}
         if (activeWait.dataset.syntheticUserInputWait === 'true') {
           activeWait.remove();
           if (!messages.children.length) renderEmptyMessages();
+          syncThinkingElapsedTimer();
           return;
         }
         activeWait.classList.remove('role-waiting');
         activeWait.removeAttribute('role');
         activeWait.removeAttribute('aria-live');
-        activeWait.querySelector('.thinking-label').textContent = activeWait.dataset.originalWaitLabel || 'Thinking...';
+        renderThinkingLabel(activeWait.querySelector('.thinking-label'));
         activeWait.querySelector('.message-text').textContent = activeWait.dataset.originalWaitText || '';
         delete activeWait.dataset.userInputWait;
         delete activeWait.dataset.originalWaitLabel;
         delete activeWait.dataset.originalWaitText;
+        syncThinkingElapsedTimer();
         return;
       }
 
@@ -414,8 +425,9 @@ ${messageRenderingStyles}
       article.classList.add('role-waiting');
       article.setAttribute('role', 'status');
       article.setAttribute('aria-live', 'polite');
-      if (label) label.textContent = 'Waiting for user input... see pi terminal';
+      if (label) label.textContent = 'Waiting for you... see pi terminal';
       if (text) text.textContent = message || 'Open the Pi terminal to continue.';
+      syncThinkingElapsedTimer();
     };
 
     const assistantSoundEnabled = ${options.assistantSoundEnabled === true ? "true" : "false"};
@@ -508,6 +520,104 @@ ${messageRenderingStyles}
     const countAssistantMessages = (messageList) => Array.isArray(messageList)
       ? messageList.filter(isAssistantMessage).length
       : 0;
+    const findLastAssistantMessage = (messageList) => Array.isArray(messageList)
+      ? messageList.findLast(isAssistantMessage)
+      : undefined;
+    const readMessageTimestamp = (message) => {
+      const value = message && message.timestamp;
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value !== 'string' || !value.trim()) return undefined;
+      const timestamp = Date.parse(value);
+      return Number.isFinite(timestamp) ? timestamp : undefined;
+    };
+    const initialLastAssistant = findLastAssistantMessage(renderedMessages);
+    let lastAssistantMessageAt = initialLastAssistant
+      ? readMessageTimestamp(initialLastAssistant) ?? Date.now()
+      : undefined;
+    let thinkingStartedAt = undefined;
+    let thinkingUpdatedAt = undefined;
+    let thinkingElapsedTimer = undefined;
+    const formatElapsedTime = (elapsedMs) => {
+      const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+      const seconds = totalSeconds % 60;
+      const totalMinutes = Math.floor(totalSeconds / 60);
+      if (totalMinutes < 1) return seconds + 's';
+      const minutes = totalMinutes % 60;
+      const hours = Math.floor(totalMinutes / 60);
+      if (hours < 1) return minutes + 'm ' + String(seconds).padStart(2, '0') + 's';
+      return hours + 'h ' + String(minutes).padStart(2, '0') + 'm ' + String(seconds).padStart(2, '0') + 's';
+    };
+    const renderThinkingLabel = (label) => {
+      if (!label) return;
+      const text = document.createElement('span');
+      text.textContent = 'Thinking...';
+      const elapsed = document.createElement('span');
+      elapsed.className = 'thinking-elapsed';
+      label.replaceChildren(text, elapsed);
+    };
+    const updateThinkingElapsed = () => {
+      const article = messages && messages.querySelector('.session-message.role-thinking:not(.role-waiting):last-child');
+      const elapsed = article && article.querySelector('.thinking-elapsed');
+      if (!elapsed) return;
+      const startedAt = thinkingUpdatedAt ?? lastAssistantMessageAt ?? thinkingStartedAt ?? Date.now();
+      elapsed.textContent = formatElapsedTime(Date.now() - startedAt);
+      elapsed.title = thinkingUpdatedAt !== undefined
+        ? 'Time elapsed since the last thinking update'
+        : lastAssistantMessageAt === undefined
+          ? 'Time elapsed while thinking'
+          : 'Time elapsed since the last assistant message';
+    };
+    const syncThinkingElapsedTimer = () => {
+      const thinking = messages && messages.querySelector('.session-message.role-thinking:last-child');
+      if (!thinking) {
+        thinkingStartedAt = undefined;
+        thinkingUpdatedAt = undefined;
+      } else if (thinkingStartedAt === undefined) {
+        thinkingStartedAt = Date.now();
+      }
+
+      const shouldRun = Boolean(thinking && !thinking.classList.contains('role-waiting'));
+      if (!shouldRun) {
+        if (thinkingElapsedTimer !== undefined) window.clearInterval(thinkingElapsedTimer);
+        thinkingElapsedTimer = undefined;
+        return;
+      }
+      updateThinkingElapsed();
+      if (thinkingElapsedTimer === undefined) {
+        thinkingElapsedTimer = window.setInterval(updateThinkingElapsed, 1000);
+      }
+    };
+    const updateLastAssistantMessageAt = (newMessages) => {
+      const previousAssistant = findLastAssistantMessage(renderedMessages);
+      const nextAssistant = findLastAssistantMessage(newMessages);
+      if (!nextAssistant) {
+        lastAssistantMessageAt = undefined;
+        return;
+      }
+      const timestamp = readMessageTimestamp(nextAssistant);
+      if (timestamp !== undefined) {
+        lastAssistantMessageAt = timestamp;
+        return;
+      }
+      if (!previousAssistant ||
+          countAssistantMessages(newMessages) > countAssistantMessages(renderedMessages) ||
+          previousAssistant.text !== nextAssistant.text) {
+        lastAssistantMessageAt = Date.now();
+      }
+    };
+    const thinkingInfoSignature = (message) => JSON.stringify([
+      String(message?.text || ''),
+      Object.entries(message?.counts || {}).sort(([a], [b]) => a.localeCompare(b)),
+    ]);
+    const hasThinkingInfoChanged = (previousMessage, nextMessage) =>
+      isThinkingMessage(previousMessage) &&
+      isThinkingMessage(nextMessage) &&
+      thinkingInfoSignature(previousMessage) !== thinkingInfoSignature(nextMessage);
+    const resetThinkingElapsedIfChanged = (previousMessage, nextMessage) => {
+      if (hasThinkingInfoChanged(previousMessage, nextMessage)) {
+        thinkingUpdatedAt = Date.now();
+      }
+    };
     const messageRenderSlot = (message) => {
       if (!message) return '';
       return (message.kind || 'message') + ':' + (message.role || '');
@@ -538,7 +648,7 @@ ${messageRenderingScript}
       if (message.kind === 'thinking') {
         const label = document.createElement('div');
         label.className = 'thinking-label';
-        label.textContent = 'Thinking...';
+        renderThinkingLabel(label);
         article.append(label);
       }
 
@@ -569,7 +679,9 @@ ${messageRenderingScript}
       const empty = messages.querySelector('.empty-messages');
       if (empty) empty.remove();
 
-      const wasThinkingUpdate = isThinkingMessage(renderedMessages[renderedMessages.length - 1]) && isThinkingMessage(message);
+      const previousThinking = renderedMessages[renderedMessages.length - 1];
+      const wasThinkingUpdate = isThinkingMessage(previousThinking) && isThinkingMessage(message);
+      resetThinkingElapsedIfChanged(previousThinking, message);
       const lastMessage = messages.querySelector('.session-message:last-child');
       if (lastMessage && lastMessage.classList.contains('role-thinking')) {
         lastMessage.remove();
@@ -580,23 +692,33 @@ ${messageRenderingScript}
 
       messages.append(renderMessageElement(message));
       renderedMessages.push(message);
-      if (isAssistantMessage(message)) playNotificationSound();
+      if (isAssistantMessage(message)) {
+        lastAssistantMessageAt = readMessageTimestamp(message) ?? Date.now();
+        playNotificationSound();
+      }
+      syncThinkingElapsedTimer();
       return !wasThinkingUpdate;
     };
     const replaceMessages = (newMessages, shouldPlayAssistantSound = true) => {
       if (!messages) return false;
       const shouldScroll = shouldScrollForReplacement(newMessages);
       const previousAssistantMessageCount = countAssistantMessages(renderedMessages);
+      const previousThinking = renderedMessages[renderedMessages.length - 1];
+      const nextThinking = newMessages[newMessages.length - 1];
+      resetThinkingElapsedIfChanged(previousThinking, nextThinking);
+      updateLastAssistantMessageAt(newMessages);
       messages.replaceChildren();
       renderedMessages.splice(0, renderedMessages.length, ...newMessages);
       if (!newMessages.length) {
         renderEmptyMessages();
+        syncThinkingElapsedTimer();
         return false;
       }
       newMessages.forEach((message) => messages.append(renderMessageElement(message)));
       if (shouldPlayAssistantSound && countAssistantMessages(newMessages) > previousAssistantMessageCount) {
         playNotificationSound();
       }
+      syncThinkingElapsedTimer();
       return shouldScroll;
     };
     const formatTokens = (value) => {
@@ -818,6 +940,7 @@ ${messageRenderingScript}
       window.addEventListener(eventName, unlockNotificationAudio, { once: true, passive: true });
     });
     qcodeMessageRendering.renderExistingMessages();
+    syncThinkingElapsedTimer();
     updateContextUsage(${toScriptJson(session.contextUsage)});
     updateSessionWarnings(${toScriptJson(session.warnings ?? [])});
     updateUserInputWait(

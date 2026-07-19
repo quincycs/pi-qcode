@@ -613,7 +613,9 @@ export function renderSessionMessage(message: SessionMessage): string {
     : message.role === "user"
       ? "role-user"
       : "role-assistant";
-  const label = message.kind === "thinking" ? '<div class="thinking-label">Thinking...</div>' : "";
+  const label = message.kind === "thinking"
+    ? '<div class="thinking-label"><span>Thinking...</span><span class="thinking-elapsed"></span></div>'
+    : "";
   return `<article class="session-message ${roleClass}">
     ${label}
     <div class="message-text" data-message-role="${escapeHtml(message.role)}" data-message-kind="${escapeHtml(message.kind ?? "message")}">${escapeHtml(message.text)}</div>
