@@ -39,6 +39,20 @@ test("renders persistent placeholders for context percentage and cost", () => {
   assert.match(html, /usage && usage\.percent/);
 });
 
+test("colors context usage by used-token thresholds", () => {
+  const html = renderSessionDetail("", "nonce", {
+    title: "New Session",
+    messages: [],
+  });
+
+  assert.match(html, /getContextUsageColorClass = \(usedTokens\)/);
+  assert.match(html, /usedTokens < 100000\) return ''/);
+  assert.match(html, /usedTokens < 150000\) return ' context-usage-token-warning'/);
+  assert.match(html, /return ' context-usage-token-danger'/);
+  assert.match(html, /getContextUsageColorClass\(used\)/);
+  assert.doesNotMatch(html, /getContextUsageColorClass\(rawPercent\)/);
+});
+
 test("starts and resets the live elapsed timer with the thinking block", () => {
   const html = renderSessionDetail("/tmp/session.jsonl", "nonce", {
     title: "Session",

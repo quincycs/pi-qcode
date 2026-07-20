@@ -118,10 +118,10 @@ export function renderSessionDetail(
   .session-warning[hidden] {
     display: none !important;
   }
-  .context-usage-percent-warning {
+  .context-usage-token-warning {
     color: var(--vscode-charts-yellow, #cca700);
   }
-  .context-usage-percent-danger {
+  .context-usage-token-danger {
     color: var(--vscode-charts-red, var(--vscode-errorForeground, #f14c4c));
   }
   .body {
@@ -694,10 +694,10 @@ ${messageRenderingScript}
           : 2;
       return '$' + numberValue.toFixed(decimals);
     };
-    const getContextUsageColorClass = (percent) => {
-      if (!Number.isFinite(percent) || percent < 30) return '';
-      if (percent < 40) return ' context-usage-percent-warning';
-      return ' context-usage-percent-danger';
+    const getContextUsageColorClass = (usedTokens) => {
+      if (!Number.isFinite(usedTokens) || usedTokens < 100000) return '';
+      if (usedTokens < 150000) return ' context-usage-token-warning';
+      return ' context-usage-token-danger';
     };
     const updateContextUsage = (usage) => {
       if (!contextUsage) return;
@@ -714,8 +714,7 @@ ${messageRenderingScript}
       const cost = formatCost(usage && usage.sessionCost);
 
       const percentElement = document.createElement('span');
-      percentElement.className = 'context-usage-value' +
-        (hasPercent ? getContextUsageColorClass(rawPercent) : '');
+      percentElement.className = 'context-usage-value' + getContextUsageColorClass(used);
       percentElement.textContent = hasPercent ? rawPercent.toFixed(1) + '%' : '—%';
       const costElement = document.createElement('span');
       costElement.className = 'context-usage-value';
