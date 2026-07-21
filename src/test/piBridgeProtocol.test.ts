@@ -101,11 +101,22 @@ test("validates authentication, versions, and message limits", () => {
   });
   assert.equal(helloWithWait.ok, true);
 
+  const skillRead = validateBridgeMessage({
+    protocolVersion: PI_BRIDGE_PROTOCOL_VERSION,
+    type: "tool_execution_start",
+    bridgeId: "bridge-1",
+    sequence: 4,
+    toolCallId: "tool-1",
+    toolName: "read",
+    skillName: "code-review",
+  });
+  assert.equal(skillRead.ok, true);
+
   const invalidWait = validateBridgeMessage({
     protocolVersion: PI_BRIDGE_PROTOCOL_VERSION,
     type: "user_input_wait_end",
     bridgeId: "bridge-1",
-    sequence: 4,
+    sequence: 5,
     waitId: "",
   });
   assert.equal(invalidWait.ok, false);

@@ -696,13 +696,15 @@ export default function qcodeBridge(pi: ExtensionAPI): void {
   // message_end can run before Pi's session manager has incorporated the final
   // message. turn_end gives consumers another authoritative context refresh.
   pi.on("turn_end", (_event, ctx) => publishState(ctx));
-  pi.on("tool_execution_start", (event) =>
+  pi.on("tool_execution_start", (event) => {
+    const skillName = readSkillNameFromToolCall(event.toolName, event.args);
     publish({
       ...base("tool_execution_start"),
       toolCallId: event.toolCallId,
       toolName: event.toolName,
-    }),
-  );
+      ...(skillName ? { skillName } : {}),
+    });
+  });
   pi.on("tool_execution_end", (event, ctx) => {
     publish({
       ...base("tool_execution_end"),
@@ -850,16 +852,28 @@ function sanitizeContent(value: unknown, textLimit: number): unknown {
     } else if (block.type === "thinking") {
       result.push({ type: "thinking", thinking: "[thinking omitted]" });
     } else if (block.type === "toolCall") {
+      const toolName = stringValue(block.name) || "tool";
+      const skillName = readSkillNameFromToolCall(toolName, block.arguments);
       result.push({
         type: "toolCall",
         id: stringValue(block.id),
-        name: stringValue(block.name),
+        name: toolName,
+        ...(skillName ? { skillName } : {}),
       });
     } else if (block.type === "image") {
       result.push({ type: "image", omitted: true });
     }
   }
   return result;
+}
+
+function readSkillNameFromToolCall(
+  toolName: string,
+  args: unknown,
+): string | undefined {
+  if (toolName !== "read" && !toolName.endsWith(".read")) return undefined;
+  const filePath = stringValue(readRecord(args)?.path);
+  return filePath?.match(/(?:^|[/\\])([^/\\]+)[/\\]SKILL\.md$/)?.[1];
 }
 
 function sanitizeLifecycleData(value: unknown): JsonRecord {

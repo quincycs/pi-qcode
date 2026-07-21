@@ -30,9 +30,16 @@ import {
   usesOpenAiCodexModelProvider,
 } from "./shellCommand";
 import {
+  collapseSkillContent,
+  countMatchingUserMessages,
+  createThinkingMessage,
+  getToolThinkingKey,
   isSessionFile,
+  normalizeUserMessageText,
+  readActivatedSkillName,
   readSessionDetail,
   readSessionMessagesFromContent,
+  userMessageTextsMatch,
   type ContextUsage,
   type SessionMessage,
 } from "./sessionFiles";
@@ -232,6 +239,9 @@ export class PiTerminalSessions implements vscode.Disposable {
       ? readSessionDetail(resolvedFilePath).messages.map((message) => ({
           ...message,
           counts: message.counts ? { ...message.counts } : undefined,
+          activatedSkills: message.activatedSkills
+            ? [...message.activatedSkills]
+            : undefined,
         }))
       : [];
     removeThinking(initialMessages);
@@ -681,15 +691,13 @@ export class PiTerminalSessions implements vscode.Disposable {
     for (const optimisticMessage of session.optimisticUserMessages) {
       const authoritativeText =
         optimisticMessage.authoritativeText || optimisticMessage.text;
-      const occurrenceCount = countUserMessages(
+      const occurrenceCount = countMatchingUserMessages(
         session.visibleMessages,
         authoritativeText,
       );
-      if (
-        optimisticMessage.deliveryState === "correlated" &&
-        occurrenceCount > optimisticMessage.baselineOccurrenceCount
-      )
-        continue;
+      // The snapshot is authoritative. A new matching occurrence proves the
+      // optimistic prompt was persisted even if its raw input event was missed.
+      if (occurrenceCount > optimisticMessage.baselineOccurrenceCount) continue;
       removeThinking(session.visibleMessages);
       session.visibleMessages.push({
         role: "user",
@@ -722,7 +730,7 @@ export class PiTerminalSessions implements vscode.Disposable {
             count +
             (index !== visibleIndex &&
             message.role === "user" &&
-            message.text === event.text
+            userMessageTextsMatch(message.text, event.text)
               ? 1
               : 0),
           0,
@@ -741,7 +749,7 @@ export class PiTerminalSessions implements vscode.Disposable {
             ? undefined
             : session.visibleMessages[visibleIndex];
         if (visible) {
-          visible.text = event.text;
+          visible.text = normalizeUserMessageText(event.text);
           visible.deliveryState = "correlated";
         }
         return;
@@ -749,13 +757,10 @@ export class PiTerminalSessions implements vscode.Disposable {
     }
 
     removeThinking(session.visibleMessages);
+    const text = normalizeUserMessageText(event.text);
     const previous = session.visibleMessages.at(-1);
-    if (!(previous?.role === "user" && previous.text === event.text)) {
-      session.visibleMessages.push({
-        role: "user",
-        kind: "message",
-        text: event.text,
-      });
+    if (!(previous?.role === "user" && userMessageTextsMatch(previous.text, text))) {
+      session.visibleMessages.push({ role: "user", kind: "message", text });
     }
   }
 
@@ -768,19 +773,28 @@ export class PiTerminalSessions implements vscode.Disposable {
     if (role === "user" && event.type === "message_start") {
       const text = readMessageText(message);
       if (!text) return;
+      const skillName = readActivatedSkillName(text);
       const optimisticIndex = session.optimisticUserMessages.findIndex(
         (message) =>
-          message.authoritativeText === text || message.text === text,
+          userMessageTextsMatch(message.authoritativeText || message.text, text),
       );
       if (optimisticIndex !== -1)
         session.optimisticUserMessages.splice(optimisticIndex, 1);
       removeThinking(session.visibleMessages);
       const previous = session.visibleMessages.at(-1);
-      if (!(previous?.role === "user" && previous.text === text)) {
-        session.visibleMessages.push({ role: "user", kind: "message", text });
+      if (!(previous?.role === "user" && userMessageTextsMatch(previous.text, text))) {
+        session.visibleMessages.push({
+          role: "user",
+          kind: "message",
+          text,
+          ...(skillName ? { activatedSkills: [skillName] } : {}),
+        });
+      } else if (previous && skillName) {
+        previous.text = normalizeUserMessageText(previous.text);
+        previous.activatedSkills = [skillName];
       }
       session.pendingAssistant = undefined;
-      session.thinkingCounts = {};
+      session.thinkingCounts = skillName ? { [`/skill:${skillName}`]: 1 } : {};
       upsertThinking(session);
       return;
     }
@@ -796,8 +810,10 @@ export class PiTerminalSessions implements vscode.Disposable {
   ): void {
     if (event.type !== "tool_execution_start") return;
     const toolName = event.toolName || "tool";
-    session.thinkingCounts[toolName] =
-      (session.thinkingCounts[toolName] || 0) + 1;
+    const thinkingKey = getToolThinkingKey(toolName, undefined, event.skillName);
+    session.thinkingCounts[thinkingKey] = thinkingKey.startsWith("/skill:")
+      ? 1
+      : (session.thinkingCounts[thinkingKey] || 0) + 1;
     upsertThinking(session);
   }
 
@@ -844,7 +860,7 @@ export class PiTerminalSessions implements vscode.Disposable {
     const outbound: OptimisticUserMessage = {
       clientMessageId,
       text,
-      baselineOccurrenceCount: countUserMessages(session.visibleMessages, text),
+      baselineOccurrenceCount: countMatchingUserMessages(session.visibleMessages, text),
       preSendLeafId: session.state?.leafId,
       preSendSequence: session.lastSequence,
       deliveryState: "pending",
@@ -853,7 +869,7 @@ export class PiTerminalSessions implements vscode.Disposable {
     session.visibleMessages.push({
       role: "user",
       kind: "message",
-      text,
+      text: normalizeUserMessageText(text),
       clientMessageId,
       deliveryState: "pending",
     });
@@ -1036,6 +1052,9 @@ export class PiTerminalSessions implements vscode.Disposable {
       messages: session.visibleMessages.map((message) => ({
         ...message,
         counts: message.counts ? { ...message.counts } : undefined,
+        activatedSkills: message.activatedSkills
+          ? [...message.activatedSkills]
+          : undefined,
       })),
       contextUsage:
         usage ||
@@ -1087,6 +1106,9 @@ function buildBridgePresentation(
   ).messages.map((message) => ({
     ...message,
     counts: message.counts ? { ...message.counts } : undefined,
+    activatedSkills: message.activatedSkills
+      ? [...message.activatedSkills]
+      : undefined,
   }));
   const thinkingMessage =
     messages.at(-1)?.kind === "thinking" ? messages.pop() : undefined;
@@ -1122,7 +1144,7 @@ function buildBridgePresentation(
   }
   if (!idle) {
     const thinking = createThinkingMessage(thinkingCounts);
-    if (thinking.text) messages.push(thinking);
+    if (thinking?.text) messages.push(thinking);
   }
   return {
     messages,
@@ -1171,28 +1193,8 @@ function readMessageText(message: Record<string, unknown> | undefined): string {
     .filter((item): item is Record<string, unknown> =>
       Boolean(item?.type === "text" && typeof item.text === "string"),
     )
-    .map((item) => String(item.text))
+    .map((item) => collapseSkillContent(String(item.text)))
     .join("\n");
-}
-
-function readToolCallNames(content: unknown): string[] {
-  if (!Array.isArray(content)) return [];
-  return content
-    .map((item) => readRecord(item))
-    .filter((item): item is Record<string, unknown> =>
-      Boolean(item?.type === "toolCall"),
-    )
-    .map((item) =>
-      typeof item.name === "string" && item.name ? item.name : "tool",
-    );
-}
-
-function collapseSkillContent(text: string): string {
-  const trimmed = text.trim();
-  const match = trimmed.endsWith("</skill>")
-    ? trimmed.match(/^<skill\s+name=(['"])([^'"]+)\1(?:\s|>)/)
-    : undefined;
-  return match?.[2] ? `/skill:${match[2].trim()}` : text;
 }
 
 function finalizeAssistant(session: ManagedSession): void {
@@ -1209,28 +1211,8 @@ function upsertThinking(session: ManagedSession): void {
   if (thinking) session.visibleMessages.push(thinking);
 }
 
-function createThinkingMessage(counts: Record<string, number>): SessionMessage {
-  return {
-    role: "thinking",
-    kind: "thinking",
-    text: Object.entries(counts)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, count]) => `${name}: ${count}`)
-      .join("\n"),
-    counts: { ...counts },
-  };
-}
-
 function removeThinking(messages: SessionMessage[]): void {
   if (messages.at(-1)?.kind === "thinking") messages.pop();
-}
-
-function countUserMessages(messages: SessionMessage[], text: string): number {
-  return messages.reduce(
-    (count, message) =>
-      count + (message.role === "user" && message.text === text ? 1 : 0),
-    0,
-  );
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {

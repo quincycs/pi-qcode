@@ -23,6 +23,8 @@ export interface SessionMessage {
   text: string;
   kind?: "message" | "thinking";
   counts?: Record<string, number>;
+  /** Skill commands expanded into this user message. */
+  activatedSkills?: string[];
   timestamp?: number;
   /** Present only for qcode's local optimistic outbox. */
   clientMessageId?: string;
@@ -217,13 +219,49 @@ function readText(
     .join("\n");
 }
 
-function collapseSkillContent(text: string): string {
+export function readActivatedSkillName(text: string): string | undefined {
   const trimmedText = text.trim();
-  if (!trimmedText.endsWith("</skill>")) return text;
+  const expandedMatch = trimmedText.endsWith("</skill>")
+    ? trimmedText.match(/^<skill\s+name=(['"])([^'"]+)\1(?:\s|>)/)
+    : undefined;
+  if (expandedMatch?.[2]?.trim()) return expandedMatch[2].trim();
 
-  const match = trimmedText.match(/^<skill\s+name=(['"])([^'"]+)\1(?:\s|>)/);
-  const skillName = match?.[2]?.trim();
-  return skillName ? `/skill:${skillName}` : text;
+  // Treat whitespace and optional command arguments as presentation details.
+  // Both forms identify the same authoritative skill-expanded user message.
+  return trimmedText.match(/^\/skill:([^\s]+)(?:\s[\s\S]*)?$/)?.[1];
+}
+
+export function collapseSkillContent(text: string): string {
+  const skillName = readActivatedSkillName(text);
+  if (!skillName || !text.trim().startsWith("<skill")) return text;
+  return `/skill:${skillName}`;
+}
+
+export function normalizeUserMessageText(text: string): string {
+  const collapsed = collapseSkillContent(text);
+  const skillName = readActivatedSkillName(collapsed);
+  if (!skillName) return text;
+
+  const trimmed = collapsed.trim();
+  return trimmed === `/skill:${skillName}` ? trimmed : collapsed;
+}
+
+export function userMessageTextsMatch(left: string, right: string): boolean {
+  const leftSkill = readActivatedSkillName(left);
+  const rightSkill = readActivatedSkillName(right);
+  return leftSkill && rightSkill ? leftSkill === rightSkill : left === right;
+}
+
+export function countMatchingUserMessages(
+  messages: SessionMessage[],
+  text: string,
+): number {
+  return messages.reduce(
+    (count, message) => count + (
+      message.role === "user" && userMessageTextsMatch(message.text, text) ? 1 : 0
+    ),
+    0,
+  );
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {
@@ -540,7 +578,9 @@ function updateSessionMessageState(
     });
     if (pendingAssistantMessage?.role === "assistant") {
       state.pendingAssistantMessage = pendingAssistantMessage;
-      return contextChanged;
+      incrementThinkingCounts(state.thinkingCounts, readAssistantToolCallCounts(entry));
+      upsertThinkingMessage(state.visibleMessages, state.thinkingCounts);
+      return true;
     }
   }
 
@@ -573,7 +613,9 @@ function updateCompatibilitySessionMessageState(
 
     if (message.role === "assistant") {
       state.pendingCompatibilityAssistantMessage = message;
-      return false;
+      incrementThinkingCounts(state.thinkingCounts, readAssistantToolCallCounts(entry));
+      upsertThinkingMessage(state.visibleMessages, state.thinkingCounts);
+      return true;
     }
 
     finalizeCompatibilityAssistantMessage(state);
@@ -741,6 +783,9 @@ function appendVisibleSessionMessage(
   state.visibleMessages.push(message);
   state.lastRenderedWasUser = message.role === "user";
   state.thinkingCounts = {};
+  for (const skillName of message.activatedSkills ?? []) {
+    state.thinkingCounts[getSkillThinkingKey(skillName)] = 1;
+  }
   state.pendingAssistantMessage = undefined;
   state.pendingCompatibilityAssistantMessage = undefined;
   if (state.lastRenderedWasUser) {
@@ -847,10 +892,14 @@ function readRenderableSessionMessage(
   });
   if (!text) return null;
 
+  const activatedSkills = role === "user"
+    ? readActivatedSkillNames(message.content)
+    : [];
   return {
     role,
     text,
     kind: "message",
+    ...(activatedSkills.length ? { activatedSkills } : {}),
     timestamp: readMessageTimestamp(message.timestamp, entry.timestamp),
   };
 }
@@ -913,22 +962,50 @@ function readAssistantToolCallCounts(entry: Record<string, unknown>): Record<str
 }
 
 function getToolCallThinkingKey(toolName: string, item: Record<string, unknown>): string {
-  const skillName = readSkillNameFromToolCall(toolName, item);
-  return skillName ? `/skill:${skillName}` : toolName;
+  return getToolThinkingKey(toolName, item.arguments, typeof item.skillName === "string"
+    ? item.skillName
+    : undefined);
+}
+
+export function getToolThinkingKey(
+  toolName: string,
+  args: unknown,
+  reportedSkillName?: string,
+): string {
+  const skillName = reportedSkillName?.trim() || readSkillNameFromToolCall(toolName, args);
+  return skillName ? getSkillThinkingKey(skillName) : toolName;
 }
 
 function readSkillNameFromToolCall(
   toolName: string,
-  item: Record<string, unknown>,
+  args: unknown,
 ): string | undefined {
   if (toolName !== "read" && !toolName.endsWith(".read")) return undefined;
 
-  const argumentsRecord = readToolCallArguments(item.arguments);
-  const filePath = argumentsRecord?.path;
+  const filePath = readToolCallArguments(args)?.path;
   if (typeof filePath !== "string") return undefined;
 
   const match = filePath.match(/(?:^|[/\\])([^/\\]+)[/\\]SKILL\.md$/);
   return match?.[1] || undefined;
+}
+
+function getSkillThinkingKey(skillName: string): string {
+  return `/skill:${skillName}`;
+}
+
+function readActivatedSkillNames(content: unknown): string[] {
+  const textItems = typeof content === "string"
+    ? [content]
+    : Array.isArray(content)
+      ? content
+          .map((item) => readRecord(item))
+          .filter((item): item is Record<string, unknown> =>
+            Boolean(item?.type === "text" && typeof item.text === "string"))
+          .map((item) => String(item.text))
+      : [];
+  return [...new Set(textItems.map(readActivatedSkillName).filter(
+    (name): name is string => Boolean(name),
+  ))];
 }
 
 function readToolCallArguments(value: unknown): Record<string, unknown> | undefined {
@@ -960,7 +1037,9 @@ function incrementThinkingCounts(
   incrementCounts: Record<string, number>,
 ): void {
   for (const [entryType, count] of Object.entries(incrementCounts)) {
-    counts[entryType] = (counts[entryType] || 0) + count;
+    counts[entryType] = entryType.startsWith("/skill:")
+      ? Math.max(counts[entryType] || 0, count)
+      : (counts[entryType] || 0) + count;
   }
 }
 
@@ -985,14 +1064,12 @@ function formatThinkingEntryType(entryType: string): string {
 
 function formatThinkingCount(entryType: string, count: number): string {
   const formattedEntryType = formatThinkingEntryType(entryType);
-  if (formattedEntryType.startsWith("/skill:") && count === 1) {
-    return formattedEntryType;
-  }
+  if (formattedEntryType.startsWith("/skill:")) return formattedEntryType;
 
   return `${formattedEntryType}: ${count}`;
 }
 
-function createThinkingMessage(counts: Record<string, number>): SessionMessage | null {
+export function createThinkingMessage(counts: Record<string, number>): SessionMessage | null {
   const entries = Object.entries(counts).filter(([, count]) => count > 0);
   const text = entries
     .sort(([a], [b]) => a.localeCompare(b))

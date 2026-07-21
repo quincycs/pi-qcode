@@ -106,6 +106,8 @@ export interface BridgeToolEvent extends BridgeEventBase {
   type: "tool_execution_start" | "tool_execution_end";
   toolCallId: string;
   toolName: string;
+  /** Canonical skill name when a read call loads a SKILL.md file. */
+  skillName?: string;
   isError?: boolean;
 }
 
@@ -315,7 +317,8 @@ export function validateBridgeMessage(value: unknown):
     return invalid("invalid_message", "Bridge message event has no message.");
   }
   if ((record.type === "tool_execution_start" || record.type === "tool_execution_end") && (
-    typeof record.toolCallId !== "string" || typeof record.toolName !== "string"
+    typeof record.toolCallId !== "string" || typeof record.toolName !== "string" ||
+    (record.skillName !== undefined && typeof record.skillName !== "string")
   )) return invalid("invalid_message", "Bridge tool event is incomplete.");
   if (record.type === "bridge_error" && (typeof record.code !== "string" || typeof record.message !== "string")) {
     return invalid("invalid_message", "Bridge error event is invalid.");
