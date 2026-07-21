@@ -288,7 +288,6 @@ ${messageRenderingStyles}
     font: inherit;
     text-align: left;
   }
-  .typeahead-item:hover,
   .typeahead-item.is-selected {
     color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
     background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
@@ -755,6 +754,13 @@ ${messageRenderingScript}
       typeaheadList.append(empty);
       typeahead.hidden = false;
     };
+    const updateTypeaheadSelection = () => {
+      typeaheadList.querySelectorAll('.typeahead-item').forEach((item) => {
+        const isSelected = Number(item.dataset.index) === selectedSuggestionIndex;
+        item.classList.toggle('is-selected', isSelected);
+        item.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+      });
+    };
     const renderTypeahead = () => {
       typeaheadList.replaceChildren();
       if (!completionSuggestions.length) {
@@ -782,8 +788,10 @@ ${messageRenderingScript}
         description.textContent = item.description || item.value || item.path || '';
 
         button.append(label, description);
-        button.addEventListener('mouseenter', () => {
+        button.addEventListener('mousemove', () => {
+          if (selectedSuggestionIndex === index) return;
           selectedSuggestionIndex = index;
+          updateTypeaheadSelection();
         });
         button.addEventListener('mousedown', (event) => {
           event.preventDefault();
@@ -945,14 +953,14 @@ ${messageRenderingScript}
       if (event.key === 'ArrowDown') {
         event.preventDefault();
         selectedSuggestionIndex = (selectedSuggestionIndex + 1) % completionSuggestions.length;
-        renderTypeahead();
+        updateTypeaheadSelection();
         return;
       }
 
       if (event.key === 'ArrowUp') {
         event.preventDefault();
         selectedSuggestionIndex = (selectedSuggestionIndex - 1 + completionSuggestions.length) % completionSuggestions.length;
-        renderTypeahead();
+        updateTypeaheadSelection();
         return;
       }
 
