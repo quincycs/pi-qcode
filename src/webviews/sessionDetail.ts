@@ -910,7 +910,11 @@ ${messageRenderingScript}
     if (initialInput) addToInput(initialInput);
 
     document.getElementById('home-button').addEventListener('click', () => {
-      vscode.postMessage({ command: 'home' });
+      vscode.postMessage({
+        command: 'home',
+        filePath: form.dataset.filePath || '',
+        draftText: input.value,
+      });
     });
     sessionWarning?.addEventListener('click', () => {
       vscode.postMessage({ command: 'showSessionWarnings', warnings: sessionWarnings });

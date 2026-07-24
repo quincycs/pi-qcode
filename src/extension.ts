@@ -26,6 +26,8 @@ import { renderSettings } from "./webviews/settings";
 import { getWhatsNewRelease } from "./whatsNew";
 
 const viewType = "pi-qcode.home";
+const sessionDraftsStorageKey = "sessionDrafts";
+const newSessionDraftKey = "new-session";
 
 type Route =
   | { name: "home" }
@@ -37,7 +39,7 @@ type WebviewMessage =
   | { command: "newSession" }
   | { command: "dismissWhatsNew"; version?: string }
   | { command: "ready" }
-  | { command: "home" }
+  | { command: "home"; filePath?: string; draftText?: string }
   | { command: "settings" }
   | { command: "saveSettings"; settings?: unknown }
   | { command: "confirmDeleteHashOption"; index?: number; label?: string }
@@ -57,6 +59,31 @@ export function activate(context: vscode.ExtensionContext): void {
   const extensionVersion = String(context.extension.packageJSON.version || "");
   let addToActiveQcodeInput: (() => void) | undefined;
   let pendingInputText = "";
+  const sessionDrafts = readStoredSessionDrafts(
+    context.workspaceState.get<unknown>(sessionDraftsStorageKey),
+  );
+  let draftPersistence = Promise.resolve();
+  const getSessionDraftKey = (filePath: string): string => {
+    if (!filePath) return newSessionDraftKey;
+
+    const resolvedPath = path.resolve(filePath);
+    return `session:${process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath}`;
+  };
+  const getSessionDraft = (filePath: string): string => {
+    return sessionDrafts.get(getSessionDraftKey(filePath)) ?? "";
+  };
+  const saveSessionDraft = (filePath: string, text: string): void => {
+    const key = getSessionDraftKey(filePath);
+    if (text) sessionDrafts.set(key, text);
+    else sessionDrafts.delete(key);
+
+    const snapshot = Object.fromEntries(sessionDrafts);
+    draftPersistence = draftPersistence
+      .then(() => context.workspaceState.update(sessionDraftsStorageKey, snapshot))
+      .catch((error) => {
+        console.error("Unable to save session draft:", error);
+      });
+  };
   const defaultAssistantSoundUri = vscode.Uri.joinPath(
     context.extensionUri,
     "media",
@@ -198,6 +225,7 @@ export function activate(context: vscode.ExtensionContext): void {
             getNonce(),
             session,
             {
+              initialInput: getSessionDraft(filePath),
               assistantSoundEnabled: settings.assistantSoundEnabled,
               assistantSoundUri: getAssistantSoundWebviewUri(settings),
               cspSource: view.webview.cspSource,
@@ -217,6 +245,7 @@ export function activate(context: vscode.ExtensionContext): void {
           currentRoute = { name: "sessionDetail" };
           view.webview.html = renderSessionDetail("", getNonce(), session, {
             autoFocus: true,
+            initialInput: getSessionDraft(""),
             providerOptions: settings.providerOptions,
             lastUsedProviderNickname: settings.lastUsedProviderNickname,
             assistantSoundEnabled: settings.assistantSoundEnabled,
@@ -276,6 +305,9 @@ export function activate(context: vscode.ExtensionContext): void {
         const handleSendMessage = async (
           message: Extract<WebviewMessage, { command: "sendMessage" }>,
         ) => {
+          // A submitted message is no longer an unsent draft, even while delivery
+          // is pending or the new session file has not been assigned yet.
+          saveSessionDraft(String(message.filePath || ""), "");
           // Do not let fallback watcher updates clear the optimistic bubble while
           // the terminal and bridge are being created.
           stopSessionWatcher();
@@ -500,6 +532,12 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           if (message.command === "home") {
+            if (typeof message.draftText === "string") {
+              saveSessionDraft(
+                String(message.filePath || ""),
+                message.draftText,
+              );
+            }
             showHome();
           }
 
@@ -647,6 +685,18 @@ function isPathInside(filePath: string, folderPath: string): boolean {
 function getWorkspaceCwd(): string | undefined {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   return workspaceFolder ? workspaceFolder.uri.fsPath : undefined;
+}
+
+function readStoredSessionDrafts(value: unknown): Map<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return new Map();
+  }
+
+  return new Map(
+    Object.entries(value)
+      .filter((entry): entry is [string, string] =>
+        typeof entry[1] === "string" && Boolean(entry[1])),
+  );
 }
 
 function readWebviewSessionWarnings(value: unknown): SessionWarning[] {
