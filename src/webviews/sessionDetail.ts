@@ -146,19 +146,6 @@ export function renderSessionDetail(
   .session-message.role-user {
     border-right-color: var(--vscode-charts-blue, #3794ff);
   }
-  .session-message.delivery-failed {
-    border-color: var(--vscode-errorForeground, #f14c4c);
-  }
-  .retry-message {
-    margin-top: 8px;
-    padding: 2px 7px;
-    color: var(--vscode-button-foreground);
-    background: var(--vscode-button-background);
-    border: 0;
-    border-radius: 3px;
-    cursor: pointer;
-    font: inherit;
-  }
   .session-message.role-assistant {
     border-right-color: var(--vscode-widget-border, transparent);
   }
@@ -595,11 +582,7 @@ ${messageRenderingScript}
         : message.role === 'user'
           ? 'role-user'
           : 'role-assistant';
-      article.className = 'session-message ' + roleClass +
-        (message.deliveryState === 'failed' ? ' delivery-failed' : '');
-      if (message.deliveryState === 'failed') {
-        article.title = 'Message delivery failed. Your text has been kept; submit it again to retry.';
-      }
+      article.className = 'session-message ' + roleClass;
 
       if (message.kind === 'thinking') {
         const label = document.createElement('div');
@@ -612,21 +595,6 @@ ${messageRenderingScript}
       qcodeMessageRendering.renderMessageTextElement(text, message);
 
       article.append(text);
-      if (message.deliveryState === 'failed' && message.clientMessageId) {
-        const retry = document.createElement('button');
-        retry.type = 'button';
-        retry.className = 'retry-message';
-        retry.textContent = 'Retry';
-        retry.addEventListener('click', () => {
-          vscode.postMessage({
-            command: 'sendMessage',
-            filePath: form.dataset.filePath || '',
-            text: message.text || '',
-            clientMessageId: message.clientMessageId,
-          });
-        });
-        article.append(retry);
-      }
       return article;
     };
     const appendMessage = (message) => {
