@@ -1,5 +1,6 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
+import { serializeQcodeAttachmentPrompt } from "../chatAttachments";
 import {
   buildTerminalCommand,
   prepareTerminalArgument,
@@ -35,4 +36,13 @@ test("quotes spaces, apostrophes, multiline prompts, and leading at signs", () =
     buildTerminalCommand("pi", ["-e", "/tmp/a bridge.ts", "hello"], "posix"),
     "pi '-e' '/tmp/a bridge.ts' 'hello'",
   );
+
+  const prompt = serializeQcodeAttachmentPrompt("see file", [{
+    id: "id",
+    name: "screen shot.png",
+    path: "C:\\Users\\Name\\Temp\\pi-qcode\\id\\screen shot.png",
+  }]);
+  const command = buildTerminalCommand("pi", [prompt], "powershell");
+  assert.match(command, /C:\\Users\\Name\\Temp\\pi-qcode\\id\\screen shot\.png/);
+  assert.match(command, /<qcode-attachments>/);
 });

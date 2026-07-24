@@ -2,7 +2,7 @@ import { StringDecoder } from "node:string_decoder";
 
 export const PI_BRIDGE_PROTOCOL_VERSION = 1 as const;
 export const PI_BRIDGE_MAX_RECORD_BYTES = 4 * 1024 * 1024;
-export const PI_BRIDGE_MAX_MESSAGE_BYTES = 256 * 1024;
+export const PI_BRIDGE_MAX_MESSAGE_BYTES = 192 * 1024;
 
 export type BridgeConnectionStatus =
   | "connecting"

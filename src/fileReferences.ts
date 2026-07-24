@@ -21,6 +21,14 @@ export async function openFileReference(value: string): Promise<void> {
     return;
   }
 
+  // Let VS Code select the appropriate editor for references without a line.
+  // Attachments may be images or other binary files that openTextDocument cannot
+  // display, while `vscode.open` routes them to the built-in/custom editor.
+  if (resolved.line === undefined) {
+    await vscode.commands.executeCommand("vscode.open", resolved.uri, { preview: false });
+    return;
+  }
+
   const document = await vscode.workspace.openTextDocument(resolved.uri);
   const editor = await vscode.window.showTextDocument(document, {
     preview: false,

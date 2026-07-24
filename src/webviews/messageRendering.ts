@@ -131,6 +131,89 @@ export const messageRenderingStyles = String.raw`
   .message-text .file-reference {
     cursor: pointer;
   }
+  .attachment-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 8px;
+  }
+  .attachment-list:first-child,
+  .message-text[hidden] + .attachment-list {
+    margin-top: 0;
+  }
+  .attachment-list[hidden] {
+    display: none !important;
+  }
+  .attachment-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    padding: 5px 7px;
+    color: var(--vscode-foreground);
+    background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+    border: 1px solid var(--vscode-widget-border, transparent);
+    border-radius: 4px;
+  }
+  .attachment-icon {
+    flex: 0 0 auto;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .attachment-details {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .attachment-name,
+  .attachment-meta {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .attachment-name {
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .attachment-meta {
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+  }
+  .attachment-open,
+  .attachment-remove {
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    font: inherit;
+  }
+  .attachment-open {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    min-width: 0;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+  }
+  .attachment-remove {
+    flex: 0 0 auto;
+    padding: 1px 5px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 18px;
+  }
+  .attachment-open:hover .attachment-name {
+    color: var(--vscode-textLink-foreground);
+    text-decoration: underline;
+  }
+  .attachment-remove:hover {
+    background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+  }
+  .attachment-row.is-error .attachment-meta {
+    color: var(--vscode-errorForeground);
+  }
   .qcode-context-menu[hidden] {
     display: none !important;
   }
@@ -433,6 +516,63 @@ export const messageRenderingScript = String.raw`
         return html;
       };
       const renderPlainText = (text) => renderPlainSegment(String(text || '')).replace(/\n/g, '<br>');
+      const formatAttachmentSize = (value) => {
+        const size = Number(value);
+        if (!Number.isFinite(size) || size < 0) return '';
+        if (size >= 1024 * 1024) return (size / (1024 * 1024)).toFixed(size >= 10 * 1024 * 1024 ? 0 : 1) + ' MB';
+        if (size >= 1024) return Math.round(size / 1024) + ' KB';
+        return Math.round(size) + ' B';
+      };
+      const getAttachmentType = (attachment) => {
+        const name = String(attachment?.name || '');
+        return name.match(/\.([^.]+)$/)?.[1]?.toUpperCase() || 'FILE';
+      };
+      const createAttachmentRow = (attachment, options = {}) => {
+        const row = document.createElement('div');
+        row.className = 'attachment-row' + (options.error ? ' is-error' : '');
+        const content = document.createElement(options.clickable && attachment?.path ? 'button' : 'div');
+        if (content instanceof HTMLButtonElement) {
+          content.type = 'button';
+          content.className = 'attachment-open';
+          content.dataset.fileReference = String(attachment.path || '');
+          content.setAttribute('aria-label', 'Open attachment ' + String(attachment.name || 'file'));
+        } else {
+          content.className = 'attachment-open';
+        }
+        const icon = document.createElement('span');
+        icon.className = 'attachment-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = '▱';
+        const details = document.createElement('span');
+        details.className = 'attachment-details';
+        const name = document.createElement('span');
+        name.className = 'attachment-name';
+        name.textContent = String(attachment?.name || 'pasted-file');
+        const meta = document.createElement('span');
+        meta.className = 'attachment-meta';
+        const metadata = [getAttachmentType(attachment), formatAttachmentSize(attachment?.size)].filter(Boolean);
+        meta.textContent = options.error || options.status || metadata.join(' · ');
+        details.append(name, meta);
+        content.append(icon, details);
+        row.append(content);
+        if (typeof options.onRemove === 'function') {
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'attachment-remove';
+          remove.textContent = '×';
+          remove.setAttribute('aria-label', 'Remove attachment ' + String(attachment?.name || 'file'));
+          remove.addEventListener('click', options.onRemove);
+          row.append(remove);
+        }
+        return row;
+      };
+      const renderAttachmentList = (container, attachments, options = {}) => {
+        container.replaceChildren();
+        for (const attachment of Array.isArray(attachments) ? attachments : []) {
+          container.append(createAttachmentRow(attachment, options));
+        }
+        container.hidden = !container.children.length;
+      };
       const normalizeDisplayText = (message) => {
         let text = String((message && message.text) || '');
         if ((message && message.role) === 'user' && !/[\r\n]/.test(text) && /\\[rn]/.test(text)) {
@@ -582,7 +722,7 @@ export const messageRenderingScript = String.raw`
             return;
           }
 
-          const fileReference = target && target.closest('a[data-file-reference]');
+          const fileReference = target && target.closest('[data-file-reference]');
           if (fileReference) {
             event.preventDefault();
             vscode.postMessage({
@@ -603,9 +743,30 @@ export const messageRenderingScript = String.raw`
         });
       };
 
-      return { renderExistingMessages, renderMessageTextElement, installClickHandlers };
+      return { createAttachmentRow, renderAttachmentList, renderExistingMessages, renderMessageTextElement, installClickHandlers };
     })();
 `;
+
+function renderAttachmentRows(message: SessionMessage): string {
+  if (!message.attachments?.length) return "";
+  const rows = message.attachments.map((attachment) => {
+    const type = pathExtension(attachment.name) || "FILE";
+    const size = attachment.size === undefined ? "" : formatAttachmentSize(attachment.size);
+    const metadata = [type, size].filter(Boolean).join(" · ");
+    return `<div class="attachment-row"><button type="button" class="attachment-open" data-file-reference="${escapeHtml(attachment.path)}" aria-label="Open attachment ${escapeHtml(attachment.name)}"><span class="attachment-icon" aria-hidden="true">▱</span><span class="attachment-details"><span class="attachment-name">${escapeHtml(attachment.name)}</span><span class="attachment-meta">${escapeHtml(metadata)}</span></span></button></div>`;
+  }).join("");
+  return `<div class="attachment-list">${rows}</div>`;
+}
+
+function pathExtension(name: string): string {
+  return name.match(/\.([^.]+)$/)?.[1]?.toUpperCase() || "";
+}
+
+function formatAttachmentSize(size: number): string {
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(size >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${Math.round(size)} B`;
+}
 
 export function renderSessionMessage(message: SessionMessage): string {
   const roleClass = message.kind === "thinking"
@@ -616,8 +777,10 @@ export function renderSessionMessage(message: SessionMessage): string {
   const label = message.kind === "thinking"
     ? '<div class="thinking-label"><span>Thinking...</span><span class="thinking-elapsed"></span></div>'
     : "";
+  const hiddenText = !message.text && message.attachments?.length ? " hidden" : "";
   return `<article class="session-message ${roleClass}">
     ${label}
-    <div class="message-text" data-message-role="${escapeHtml(message.role)}" data-message-kind="${escapeHtml(message.kind ?? "message")}">${escapeHtml(message.text)}</div>
+    <div class="message-text" data-message-role="${escapeHtml(message.role)}" data-message-kind="${escapeHtml(message.kind ?? "message")}" data-message-text="${escapeHtml(message.text)}"${hiddenText}>${escapeHtml(message.text)}</div>
+    ${renderAttachmentRows(message)}
   </article>`;
 }

@@ -2,6 +2,15 @@ import * as crypto from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import {
+  normalizeSessionDraft,
+  removePastedAttachment,
+  savePastedAttachment,
+  serializeQcodeAttachmentPrompt,
+  validateChatAttachment,
+  validateChatAttachmentList,
+  type SessionDraft,
+} from "./chatAttachments";
 import { searchFileSuggestions } from "./fileSuggestions";
 import {
   fileReferenceExists,
@@ -9,6 +18,7 @@ import {
   openFileReference,
 } from "./fileReferences";
 import { searchHashAutocompleteSuggestions } from "./hashAutocomplete";
+import { PI_BRIDGE_MAX_MESSAGE_BYTES } from "./piBridgeProtocol";
 import { PiTerminalSessions, type PiTerminalSessionView } from "./piTerminalSessions";
 import {
   dismissWhatsNewVersion,
@@ -39,14 +49,16 @@ type WebviewMessage =
   | { command: "newSession" }
   | { command: "dismissWhatsNew"; version?: string }
   | { command: "ready" }
-  | { command: "home"; filePath?: string; draftText?: string }
+  | { command: "home"; filePath?: string; draftText?: string; draftAttachments?: unknown }
   | { command: "settings" }
   | { command: "saveSettings"; settings?: unknown }
   | { command: "confirmDeleteHashOption"; index?: number; label?: string }
   | { command: "confirmDeleteProviderOption"; index?: number; label?: string }
   | { command: "saveLastUsedProvider"; nickname?: string }
   | { command: "showSessionWarnings"; warnings?: unknown }
-  | { command: "sendMessage"; filePath?: string; text?: string; providerCliArgs?: string; clientMessageId?: string }
+  | { command: "sendMessage"; filePath?: string; text?: string; attachments?: unknown; providerCliArgs?: string; clientMessageId?: string }
+  | { command: "savePastedAttachment"; requestId?: string; name?: unknown; mimeType?: unknown; size?: unknown; data?: unknown }
+  | { command: "removePastedAttachment"; attachment?: unknown }
   | { command: "copyToClipboard"; text?: string }
   | { command: "openFileReference"; value?: string }
   | { command: "openExternalUrl"; value?: string }
@@ -69,12 +81,12 @@ export function activate(context: vscode.ExtensionContext): void {
     const resolvedPath = path.resolve(filePath);
     return `session:${process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath}`;
   };
-  const getSessionDraft = (filePath: string): string => {
-    return sessionDrafts.get(getSessionDraftKey(filePath)) ?? "";
+  const getSessionDraft = (filePath: string): SessionDraft => {
+    return sessionDrafts.get(getSessionDraftKey(filePath)) ?? { text: "", attachments: [] };
   };
-  const saveSessionDraft = (filePath: string, text: string): void => {
+  const saveSessionDraft = (filePath: string, draft: SessionDraft): void => {
     const key = getSessionDraftKey(filePath);
-    if (text) sessionDrafts.set(key, text);
+    if (draft.text || draft.attachments.length) sessionDrafts.set(key, draft);
     else sessionDrafts.delete(key);
 
     const snapshot = Object.fromEntries(sessionDrafts);
@@ -149,7 +161,6 @@ export function activate(context: vscode.ExtensionContext): void {
         const dismissedWhatsNewVersions = new Set(
           readQcodeSettings().dismissedWhatsNewVersions,
         );
-
         const configureWebviewOptions = (settings: QcodeSettings = readQcodeSettings()) => {
           const soundPath = resolveAssistantSoundPath(settings);
           const localResourceRoots = [assistantSoundMediaRoot];
@@ -220,12 +231,14 @@ export function activate(context: vscode.ExtensionContext): void {
           const settings = readQcodeSettings();
           configureWebviewOptions(settings);
           currentRoute = { name: "sessionDetail", filePath, bridgeId: bridgeSession?.bridgeId };
+          const draft = getSessionDraft(filePath);
           view.webview.html = renderSessionDetail(
             filePath,
             getNonce(),
             session,
             {
-              initialInput: getSessionDraft(filePath),
+              initialInput: draft.text,
+              initialAttachments: draft.attachments,
               assistantSoundEnabled: settings.assistantSoundEnabled,
               assistantSoundUri: getAssistantSoundWebviewUri(settings),
               cspSource: view.webview.cspSource,
@@ -243,9 +256,11 @@ export function activate(context: vscode.ExtensionContext): void {
           const settings = readQcodeSettings();
           configureWebviewOptions(settings);
           currentRoute = { name: "sessionDetail" };
+          const draft = getSessionDraft("");
           view.webview.html = renderSessionDetail("", getNonce(), session, {
             autoFocus: true,
-            initialInput: getSessionDraft(""),
+            initialInput: draft.text,
+            initialAttachments: draft.attachments,
             providerOptions: settings.providerOptions,
             lastUsedProviderNickname: settings.lastUsedProviderNickname,
             assistantSoundEnabled: settings.assistantSoundEnabled,
@@ -305,16 +320,27 @@ export function activate(context: vscode.ExtensionContext): void {
         const handleSendMessage = async (
           message: Extract<WebviewMessage, { command: "sendMessage" }>,
         ) => {
-          // A submitted message is no longer an unsent draft, even while delivery
-          // is pending or the new session file has not been assigned yet.
-          saveSessionDraft(String(message.filePath || ""), "");
-          // Do not let fallback watcher updates clear the optimistic bubble while
-          // the terminal and bridge are being created.
-          stopSessionWatcher();
           try {
+            const submittedAttachments = validateChatAttachmentList(
+              message.attachments,
+            );
+            const rawPrompt = serializeQcodeAttachmentPrompt(
+              String(message.text || ""),
+              submittedAttachments,
+            );
+            if (!rawPrompt) throw new Error("Message text or an attachment is required.");
+            if (Buffer.byteLength(rawPrompt, "utf8") > PI_BRIDGE_MAX_MESSAGE_BYTES) {
+              throw new Error(`Message exceeds ${PI_BRIDGE_MAX_MESSAGE_BYTES} bytes.`);
+            }
+            // A valid submitted message is no longer an unsent draft, even while
+            // delivery is pending or the new session file has not been assigned.
+            saveSessionDraft(String(message.filePath || ""), { text: "", attachments: [] });
+            // Do not let fallback watcher updates clear the optimistic bubble while
+            // the terminal and bridge are being created.
+            stopSessionWatcher();
             const result = await terminalSessions.sendSessionMessage(
               String(message.filePath || ""),
-              String(message.text || ""),
+              rawPrompt,
               String(message.providerCliArgs || ""),
               String(message.clientMessageId || crypto.randomUUID()),
             );
@@ -331,6 +357,34 @@ export function activate(context: vscode.ExtensionContext): void {
             const messageText = error instanceof Error ? error.message : String(error);
             void vscode.window.showErrorMessage(messageText);
           }
+        };
+
+        const handleSavePastedAttachment = async (
+          message: Extract<WebviewMessage, { command: "savePastedAttachment" }>,
+        ) => {
+          const requestId = String(message.requestId || "");
+          try {
+            const attachment = await savePastedAttachment(message);
+            await view.webview.postMessage({
+              command: "pastedAttachmentSaved",
+              requestId,
+              attachment,
+            });
+          } catch (error) {
+            await view.webview.postMessage({
+              command: "pastedAttachmentSaveError",
+              requestId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        };
+
+        const handleRemovePastedAttachment = async (
+          message: Extract<WebviewMessage, { command: "removePastedAttachment" }>,
+        ) => {
+          const attachment = validateChatAttachment(message.attachment);
+          if (!attachment) return;
+          await removePastedAttachment(attachment);
         };
 
         const handleCopyToClipboard = async (
@@ -533,9 +587,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (message.command === "home") {
             if (typeof message.draftText === "string") {
+              const attachments = validateChatAttachmentList(
+                message.draftAttachments,
+              );
               saveSessionDraft(
                 String(message.filePath || ""),
-                message.draftText,
+                { text: message.draftText, attachments },
               );
             }
             showHome();
@@ -547,6 +604,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (message.command === "sendMessage") {
             void handleSendMessage(message);
+          }
+
+          if (message.command === "savePastedAttachment") {
+            void handleSavePastedAttachment(message);
+          }
+
+          if (message.command === "removePastedAttachment") {
+            void handleRemovePastedAttachment(message);
           }
 
           if (message.command === "copyToClipboard") {
@@ -687,15 +752,15 @@ function getWorkspaceCwd(): string | undefined {
   return workspaceFolder ? workspaceFolder.uri.fsPath : undefined;
 }
 
-function readStoredSessionDrafts(value: unknown): Map<string, string> {
+export function readStoredSessionDrafts(value: unknown): Map<string, SessionDraft> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return new Map();
   }
 
   return new Map(
     Object.entries(value)
-      .filter((entry): entry is [string, string] =>
-        typeof entry[1] === "string" && Boolean(entry[1])),
+      .map(([key, draft]): [string, SessionDraft] => [key, normalizeSessionDraft(draft)])
+      .filter(([, draft]) => Boolean(draft.text || draft.attachments.length)),
   );
 }
 

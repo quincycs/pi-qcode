@@ -30,15 +30,15 @@ import {
   usesOpenAiCodexModelProvider,
 } from "./shellCommand";
 import {
-  collapseSkillContent,
   countMatchingUserMessages,
   createThinkingMessage,
   getToolThinkingKey,
   isSessionFile,
-  normalizeUserMessageText,
+  parseVisibleUserMessage,
   readActivatedSkillName,
   readSessionDetail,
   readSessionMessagesFromContent,
+  userMessageMatchesRawText,
   userMessageTextsMatch,
   type ContextUsage,
   type SessionMessage,
@@ -700,9 +700,7 @@ export class PiTerminalSessions implements vscode.Disposable {
       if (occurrenceCount > optimisticMessage.baselineOccurrenceCount) continue;
       removeThinking(session.visibleMessages);
       session.visibleMessages.push({
-        role: "user",
-        kind: "message",
-        text: authoritativeText,
+        ...createVisibleUserMessage(authoritativeText),
         clientMessageId: optimisticMessage.clientMessageId,
         deliveryState: optimisticMessage.deliveryState,
       });
@@ -730,7 +728,7 @@ export class PiTerminalSessions implements vscode.Disposable {
             count +
             (index !== visibleIndex &&
             message.role === "user" &&
-            userMessageTextsMatch(message.text, event.text)
+            userMessageMatchesRawText(message, event.text)
               ? 1
               : 0),
           0,
@@ -749,7 +747,7 @@ export class PiTerminalSessions implements vscode.Disposable {
             ? undefined
             : session.visibleMessages[visibleIndex];
         if (visible) {
-          visible.text = normalizeUserMessageText(event.text);
+          setVisibleUserMessageContent(visible, event.text);
           visible.deliveryState = "correlated";
         }
         return;
@@ -757,10 +755,9 @@ export class PiTerminalSessions implements vscode.Disposable {
     }
 
     removeThinking(session.visibleMessages);
-    const text = normalizeUserMessageText(event.text);
     const previous = session.visibleMessages.at(-1);
-    if (!(previous?.role === "user" && userMessageTextsMatch(previous.text, text))) {
-      session.visibleMessages.push({ role: "user", kind: "message", text });
+    if (!(previous?.role === "user" && userMessageMatchesRawText(previous, event.text))) {
+      session.visibleMessages.push(createVisibleUserMessage(event.text));
     }
   }
 
@@ -772,7 +769,8 @@ export class PiTerminalSessions implements vscode.Disposable {
     const role = typeof message?.role === "string" ? message.role : "";
     if (role === "user" && event.type === "message_start") {
       const text = readMessageText(message);
-      if (!text) return;
+      const visibleUserMessage = createVisibleUserMessage(text);
+      if (!visibleUserMessage.text && !visibleUserMessage.attachments?.length) return;
       const skillName = readActivatedSkillName(text);
       const optimisticIndex = session.optimisticUserMessages.findIndex(
         (message) =>
@@ -782,15 +780,13 @@ export class PiTerminalSessions implements vscode.Disposable {
         session.optimisticUserMessages.splice(optimisticIndex, 1);
       removeThinking(session.visibleMessages);
       const previous = session.visibleMessages.at(-1);
-      if (!(previous?.role === "user" && userMessageTextsMatch(previous.text, text))) {
+      if (!(previous?.role === "user" && userMessageMatchesRawText(previous, text))) {
         session.visibleMessages.push({
-          role: "user",
-          kind: "message",
-          text,
+          ...visibleUserMessage,
           ...(skillName ? { activatedSkills: [skillName] } : {}),
         });
       } else if (previous && skillName) {
-        previous.text = normalizeUserMessageText(previous.text);
+        setVisibleUserMessageContent(previous, text);
         previous.activatedSkills = [skillName];
       }
       session.pendingAssistant = undefined;
@@ -867,9 +863,7 @@ export class PiTerminalSessions implements vscode.Disposable {
     };
     session.optimisticUserMessages.push(outbound);
     session.visibleMessages.push({
-      role: "user",
-      kind: "message",
-      text: normalizeUserMessageText(text),
+      ...createVisibleUserMessage(text),
       clientMessageId,
       deliveryState: "pending",
     });
@@ -1183,17 +1177,35 @@ function readBridgeMessageTimestamp(value: unknown): number | undefined {
   return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
+// Keep raw qcode prompt parsing at the boundary where visible messages are built.
+function createVisibleUserMessage(rawText: string): SessionMessage {
+  return {
+    role: "user",
+    kind: "message",
+    ...parseVisibleUserMessage(rawText),
+  };
+}
+
+function setVisibleUserMessageContent(
+  message: SessionMessage,
+  rawText: string,
+): void {
+  const visible = parseVisibleUserMessage(rawText);
+  message.text = visible.text;
+  message.attachments = visible.attachments;
+}
+
 function readMessageText(message: Record<string, unknown> | undefined): string {
   if (!message) return "";
   if (typeof message.content === "string")
-    return collapseSkillContent(message.content);
+    return message.content;
   if (!Array.isArray(message.content)) return "";
   return message.content
     .map((item) => readRecord(item))
     .filter((item): item is Record<string, unknown> =>
       Boolean(item?.type === "text" && typeof item.text === "string"),
     )
-    .map((item) => collapseSkillContent(String(item.text)))
+    .map((item) => String(item.text))
     .join("\n");
 }
 

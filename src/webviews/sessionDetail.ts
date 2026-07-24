@@ -1,3 +1,8 @@
+import {
+  MAX_CHAT_ATTACHMENTS,
+  MAX_CHAT_ATTACHMENTS_TOTAL_BYTES,
+  type ChatAttachment,
+} from "../chatAttachments";
 import type { ProviderOption } from "../qcodeSettings";
 import type { SessionDetail } from "../sessionFiles";
 import { escapeHtml } from "../utils";
@@ -14,6 +19,7 @@ export function renderSessionDetail(
   options: {
     autoFocus?: boolean;
     initialInput?: string;
+    initialAttachments?: ChatAttachment[];
     providerOptions?: ProviderOption[];
     lastUsedProviderNickname?: string;
     assistantSoundEnabled?: boolean;
@@ -216,10 +222,20 @@ ${messageRenderingStyles}
     position: relative;
     flex: 0 0 auto;
     display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 5px 0 3px;
+    border-top: 1px solid var(--vscode-widget-border, transparent);
+  }
+  .composer-attachments {
+    width: 100%;
+    margin: 0;
+  }
+  .input-row {
+    display: flex;
     align-items: flex-end;
     gap: 6px;
-    padding: 3px 0;
-    border-top: 1px solid var(--vscode-widget-border, transparent);
+    width: 100%;
   }
   .message-input {
     min-width: 0;
@@ -319,8 +335,11 @@ ${messageRenderingStyles}
       <div class="typeahead" id="typeahead" role="listbox" aria-label="Autocomplete suggestions" hidden>
         <div class="typeahead-list" id="typeahead-list"></div>
       </div>
-      <textarea class="message-input" id="message-input" rows="2" aria-label="Message" placeholder="${escapeHtml(getMessagePlaceholder())}"></textarea>
-      <button class="submit-button" id="submit-button" type="submit" aria-label="Submit">➤</button>
+      <div class="attachment-list composer-attachments" id="composer-attachments" aria-label="Pasted attachments" hidden></div>
+      <div class="input-row">
+        <textarea class="message-input" id="message-input" rows="2" aria-label="Message" placeholder="${escapeHtml(getMessagePlaceholder())}"></textarea>
+        <button class="submit-button" id="submit-button" type="submit" aria-label="Submit">➤</button>
+      </div>
     </form>
   </main>
   <script nonce="${nonce}">
@@ -332,6 +351,8 @@ ${messageRenderingStyles}
     const sessionWarning = document.getElementById('session-warning');
     const typeahead = document.getElementById('typeahead');
     const typeaheadList = document.getElementById('typeahead-list');
+    const composerAttachmentList = document.getElementById('composer-attachments');
+    const submitButton = document.getElementById('submit-button');
     let completionState = null;
     let completionSuggestions = [];
     let selectedSuggestionIndex = 0;
@@ -341,6 +362,14 @@ ${messageRenderingStyles}
     const lastUsedProviderNickname = ${toScriptJson(lastUsedProviderNickname)};
     let sessionWarnings = [];
     let waitingForUserActive = false;
+    const composerAttachments = ${toScriptJson((options.initialAttachments ?? []).map((attachment) => ({
+      requestId: "",
+      status: "ready",
+      attachment,
+    })))};
+    const maxChatAttachments = ${MAX_CHAT_ATTACHMENTS};
+    const maxChatAttachmentsTotalBytes = ${MAX_CHAT_ATTACHMENTS_TOTAL_BYTES};
+    const discardedAttachmentRequests = new Set();
 
     const readSessionWarnings = (warnings) => {
       if (!Array.isArray(warnings)) return [];
@@ -575,6 +604,96 @@ ${messageRenderingStyles}
       return messageRenderSlot(previousLast) !== messageRenderSlot(nextLast);
     };
 ${messageRenderingScript}
+    const getReadyAttachments = () => composerAttachments
+      .filter((item) => item.status === 'ready' && item.attachment)
+      .map((item) => item.attachment);
+    const updateSubmitButton = () => {
+      const isSaving = composerAttachments.some((item) => item.status === 'saving');
+      submitButton.disabled = isSaving || (!input.value && getReadyAttachments().length === 0);
+    };
+    const removeComposerAttachment = (item) => {
+      const index = composerAttachments.indexOf(item);
+      if (index !== -1) composerAttachments.splice(index, 1);
+      if (item.status === 'saving') discardedAttachmentRequests.add(item.requestId);
+      if (item.attachment?.path) {
+        vscode.postMessage({ command: 'removePastedAttachment', attachment: item.attachment });
+      }
+      renderComposerAttachments();
+    };
+    const renderComposerAttachments = () => {
+      composerAttachmentList.replaceChildren();
+      composerAttachments.forEach((item) => {
+        const attachment = item.attachment || {
+          name: item.name || 'pasted-file',
+          size: item.size,
+        };
+        composerAttachmentList.append(qcodeMessageRendering.createAttachmentRow(attachment, {
+          status: item.status === 'saving' ? 'Saving…' : '',
+          error: item.status === 'error' ? (item.error || 'Unable to save attachment.') : '',
+          onRemove: () => removeComposerAttachment(item),
+        }));
+      });
+      composerAttachmentList.hidden = composerAttachments.length === 0;
+      updateSubmitButton();
+    };
+    const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener('load', () => resolve(String(reader.result || '')));
+      reader.addEventListener('error', () => reject(reader.error || new Error('Unable to read clipboard file.')));
+      reader.readAsDataURL(file);
+    });
+    const queuePastedFile = (file) => {
+      const existingTotalBytes = composerAttachments.reduce(
+        (total, item) => {
+          const size = item.attachment?.size ?? item.size;
+          return total + (Number.isFinite(size) ? size : 0);
+        },
+        0,
+      );
+      const limitError = composerAttachments.length >= maxChatAttachments
+        ? 'A message can include at most ' + maxChatAttachments + ' attachments.'
+        : existingTotalBytes + file.size > maxChatAttachmentsTotalBytes
+          ? 'Attachments in one message must total 50 MiB or less. You can reference additional files by their paths instead.'
+          : '';
+      if (limitError) {
+        const requestId = globalThis.crypto.randomUUID();
+        composerAttachments.push({
+          requestId,
+          status: 'error',
+          name: file.name || 'pasted-file',
+          size: file.size,
+          error: limitError,
+        });
+        renderComposerAttachments();
+        return;
+      }
+      const requestId = globalThis.crypto.randomUUID();
+      const item = {
+        requestId,
+        status: 'saving',
+        name: file.name || '',
+        mimeType: file.type || '',
+        size: file.size,
+      };
+      composerAttachments.push(item);
+      renderComposerAttachments();
+      readFileAsDataUrl(file).then((data) => {
+        if (discardedAttachmentRequests.has(requestId)) return;
+        vscode.postMessage({
+          command: 'savePastedAttachment',
+          requestId,
+          name: file.name || '',
+          mimeType: file.type || '',
+          size: file.size,
+          data,
+        });
+      }).catch((error) => {
+        if (discardedAttachmentRequests.has(requestId)) return;
+        item.status = 'error';
+        item.error = error instanceof Error ? error.message : String(error);
+        renderComposerAttachments();
+      });
+    };
     const renderMessageElement = (message) => {
       const article = document.createElement('article');
       const roleClass = message.kind === 'thinking'
@@ -593,8 +712,14 @@ ${messageRenderingScript}
 
       const text = document.createElement('div');
       qcodeMessageRendering.renderMessageTextElement(text, message);
-
+      if (!message.text && Array.isArray(message.attachments) && message.attachments.length) text.hidden = true;
       article.append(text);
+      if (Array.isArray(message.attachments) && message.attachments.length) {
+        const attachmentList = document.createElement('div');
+        attachmentList.className = 'attachment-list';
+        qcodeMessageRendering.renderAttachmentList(attachmentList, message.attachments, { clickable: true });
+        article.append(attachmentList);
+      }
       return article;
     };
     const appendMessage = (message) => {
@@ -844,6 +969,7 @@ ${messageRenderingScript}
       if (!text) return;
       input.value = input.value ? input.value + String.fromCharCode(10) + text : text;
       resizeInput();
+      updateSubmitButton();
       input.focus();
     };
     const getSelectedProviderOption = () => {
@@ -868,6 +994,7 @@ ${messageRenderingScript}
       window.addEventListener(eventName, unlockNotificationAudio, { once: true, passive: true });
     });
     qcodeMessageRendering.renderExistingMessages();
+    renderComposerAttachments();
     syncThinkingElapsedTimer();
     updateContextUsage(${toScriptJson(session.contextUsage)});
     updateSessionWarnings(${toScriptJson(session.warnings ?? [])});
@@ -882,6 +1009,7 @@ ${messageRenderingScript}
         command: 'home',
         filePath: form.dataset.filePath || '',
         draftText: input.value,
+        draftAttachments: getReadyAttachments(),
       });
     });
     sessionWarning?.addEventListener('click', () => {
@@ -898,6 +1026,23 @@ ${messageRenderingScript}
     input.addEventListener('input', () => {
       resizeInput();
       updateTypeahead();
+      updateSubmitButton();
+    });
+    input.addEventListener('paste', (event) => {
+      const clipboard = event.clipboardData;
+      if (!clipboard) return;
+      const files = Array.from(clipboard.files || []);
+      if (!files.length) {
+        for (const item of Array.from(clipboard.items || [])) {
+          if (item.kind !== 'file') continue;
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+      if (!files.length) return;
+      event.preventDefault();
+      hideTypeahead();
+      files.forEach(queuePastedFile);
     });
     input.addEventListener('click', updateTypeahead);
     input.addEventListener('keyup', (event) => {
@@ -952,6 +1097,28 @@ ${messageRenderingScript}
 
       if (data.command === 'addToInput') {
         addToInput(data.text || '');
+        updateSubmitButton();
+        return;
+      }
+
+      if (data.command === 'pastedAttachmentSaved') {
+        const item = composerAttachments.find((candidate) => candidate.requestId === data.requestId);
+        if (!item || discardedAttachmentRequests.has(data.requestId)) {
+          if (data.attachment?.path) vscode.postMessage({ command: 'removePastedAttachment', attachment: data.attachment });
+          return;
+        }
+        item.status = 'ready';
+        item.attachment = data.attachment;
+        renderComposerAttachments();
+        return;
+      }
+
+      if (data.command === 'pastedAttachmentSaveError') {
+        const item = composerAttachments.find((candidate) => candidate.requestId === data.requestId);
+        if (!item || discardedAttachmentRequests.has(data.requestId)) return;
+        item.status = 'error';
+        item.error = String(data.error || 'Unable to save attachment.');
+        renderComposerAttachments();
         return;
       }
 
@@ -998,7 +1165,9 @@ ${messageRenderingScript}
     vscode.postMessage({ command: 'ready' });
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      if (!input.value) return;
+      const readyAttachments = getReadyAttachments();
+      if (composerAttachments.some((item) => item.status === 'saving')) return;
+      if (!input.value && !readyAttachments.length) return;
 
       const sentText = input.value;
       const clientMessageId = globalThis.crypto.randomUUID();
@@ -1008,6 +1177,7 @@ ${messageRenderingScript}
         command: 'sendMessage',
         filePath: form.dataset.filePath || '',
         text: sentText,
+        attachments: readyAttachments,
         providerCliArgs,
         clientMessageId,
       });
@@ -1016,12 +1186,15 @@ ${messageRenderingScript}
         role: 'user',
         kind: 'message',
         text: sentText,
+        attachments: readyAttachments,
         clientMessageId,
         deliveryState: 'pending',
       })) {
         requestAnimationFrame(scrollLastMessageTop);
       }
       input.value = '';
+      composerAttachments.splice(0, composerAttachments.length);
+      renderComposerAttachments();
       resizeInput();
       input.focus();
     });

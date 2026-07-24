@@ -21,7 +21,7 @@ test("saves the current draft when navigating home without a timer", () => {
     messages: [],
   });
 
-  assert.match(html, /command: 'home',[\s\S]*draftText: input\.value/);
+  assert.match(html, /command: 'home',[\s\S]*draftText: input\.value,[\s\S]*draftAttachments: getReadyAttachments\(\)/);
   assert.doesNotMatch(html, /command: 'saveDraft'/);
   assert.doesNotMatch(html, /draftSaveTimer|scheduleDraftSave/);
 });

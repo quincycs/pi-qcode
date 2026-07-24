@@ -3,6 +3,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type * as vscode from "vscode";
+import {
+  parseQcodeAttachmentBlock,
+  type ChatAttachment,
+} from "./chatAttachments";
 
 export interface RecentSession {
   id: string;
@@ -25,6 +29,7 @@ export interface SessionMessage {
   counts?: Record<string, number>;
   /** Skill commands expanded into this user message. */
   activatedSkills?: string[];
+  attachments?: ChatAttachment[];
   timestamp?: number;
   /** Present only for qcode's local optimistic outbox. */
   clientMessageId?: string;
@@ -202,25 +207,17 @@ interface UsageRecord {
   costTotal?: number;
 }
 
-function readText(
-  content: unknown,
-  options: { collapseSkillContent?: boolean } = {},
-): string {
-  if (typeof content === "string") {
-    return options.collapseSkillContent ? collapseSkillContent(content) : content;
-  }
+function readText(content: unknown): string {
+  if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
     .filter((item) => item && item.type === "text" && typeof item.text === "string")
-    .map((item) => {
-      const text = item.text as string;
-      return options.collapseSkillContent ? collapseSkillContent(text) : text;
-    })
+    .map((item) => item.text as string)
     .join("\n");
 }
 
 export function readActivatedSkillName(text: string): string | undefined {
-  const trimmedText = text.trim();
+  const trimmedText = parseQcodeAttachmentBlock(text).text.trim();
   const expandedMatch = trimmedText.endsWith("</skill>")
     ? trimmedText.match(/^<skill\s+name=(['"])([^'"]+)\1(?:\s|>)/)
     : undefined;
@@ -247,9 +244,17 @@ export function normalizeUserMessageText(text: string): string {
 }
 
 export function userMessageTextsMatch(left: string, right: string): boolean {
-  const leftSkill = readActivatedSkillName(left);
-  const rightSkill = readActivatedSkillName(right);
-  return leftSkill && rightSkill ? leftSkill === rightSkill : left === right;
+  const leftParsed = parseQcodeAttachmentBlock(left);
+  const rightParsed = parseQcodeAttachmentBlock(right);
+  const leftSkill = readActivatedSkillName(leftParsed.text);
+  const rightSkill = readActivatedSkillName(rightParsed.text);
+  const textMatches = leftSkill && rightSkill
+    ? leftSkill === rightSkill
+    : leftParsed.text === rightParsed.text;
+  return textMatches && attachmentPathsMatch(
+    leftParsed.attachments,
+    rightParsed.attachments,
+  );
 }
 
 export function countMatchingUserMessages(
@@ -258,9 +263,33 @@ export function countMatchingUserMessages(
 ): number {
   return messages.reduce(
     (count, message) => count + (
-      message.role === "user" && userMessageTextsMatch(message.text, text) ? 1 : 0
+      message.role === "user" && userMessageMatchesRawText(message, text) ? 1 : 0
     ),
     0,
+  );
+}
+
+export function parseVisibleUserMessage(rawText: string): Pick<SessionMessage, "text" | "attachments"> {
+  const parsed = parseQcodeAttachmentBlock(rawText);
+  const text = normalizeUserMessageText(parsed.text);
+  return {
+    text,
+    ...(parsed.attachments.length ? { attachments: parsed.attachments } : {}),
+  };
+}
+
+export function userMessageMatchesRawText(message: SessionMessage, rawText: string): boolean {
+  const raw = parseQcodeAttachmentBlock(rawText);
+  const visibleTextMatches = userMessageTextsMatch(message.text, raw.text);
+  return visibleTextMatches && attachmentPathsMatch(message.attachments ?? [], raw.attachments);
+}
+
+function attachmentPathsMatch(
+  left: readonly ChatAttachment[],
+  right: readonly ChatAttachment[],
+): boolean {
+  return left.length === right.length && left.every(
+    (attachment, index) => attachment.path === right[index]?.path,
   );
 }
 
@@ -430,9 +459,12 @@ function parseSessionFile(filePath: string): RecentSession | null {
 
         if (entry.type === "message" && entry.message) {
           if (entry.message.role === "user") {
-            const text = readText(entry.message.content, { collapseSkillContent: true });
-            if (text && !text.startsWith("You are running inside VS Code")) {
-              const preview = text.slice(0, 160).replace(/\s+/g, " ").trim();
+            const rawText = readText(entry.message.content);
+            const parsed = parseQcodeAttachmentBlock(rawText);
+            const text = collapseSkillContent(parsed.text);
+            if ((text || parsed.attachments.length) && !text.startsWith("You are running inside VS Code")) {
+              const previewText = text.trim() || `Attached: ${parsed.attachments.map((attachment) => attachment.name).join(", ")}`;
+              const preview = previewText.slice(0, 160).replace(/\s+/g, " ").trim();
               if (!firstUserMessage) firstUserMessage = preview;
               latestUserMessage = preview;
             }
@@ -887,10 +919,10 @@ function readRenderableSessionMessage(
   if (role !== "user" && !(options.includeAssistant && role === "assistant")) return null;
 
   const errorMessage = role === "assistant" ? readAssistantErrorMessage(message, entry) : "";
-  const text = errorMessage || readText(message.content, {
-    collapseSkillContent: role === "user",
-  });
-  if (!text) return null;
+  const rawText = errorMessage || readText(message.content);
+  const visibleUserMessage = role === "user" ? parseVisibleUserMessage(rawText) : undefined;
+  const text = visibleUserMessage?.text ?? rawText;
+  if (!text && !visibleUserMessage?.attachments?.length) return null;
 
   const activatedSkills = role === "user"
     ? readActivatedSkillNames(message.content)
@@ -899,6 +931,7 @@ function readRenderableSessionMessage(
     role,
     text,
     kind: "message",
+    ...(visibleUserMessage?.attachments?.length ? { attachments: visibleUserMessage.attachments } : {}),
     ...(activatedSkills.length ? { activatedSkills } : {}),
     timestamp: readMessageTimestamp(message.timestamp, entry.timestamp),
   };

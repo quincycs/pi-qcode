@@ -2,6 +2,7 @@ import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   JsonLineDecoder,
+  PI_BRIDGE_MAX_MESSAGE_BYTES,
   PI_BRIDGE_PROTOCOL_VERSION,
   validateBridgeCommand,
   validateBridgeMessage,
@@ -60,6 +61,17 @@ test("validates authentication, versions, and message limits", () => {
     delivery: "followUp",
   });
   assert.equal(send.ok, true);
+
+  const oversized = validateBridgeCommand({
+    protocolVersion: PI_BRIDGE_PROTOCOL_VERSION,
+    type: "send_user_message",
+    requestId: "5",
+    clientMessageId: "client-2",
+    text: "a".repeat(PI_BRIDGE_MAX_MESSAGE_BYTES + 1),
+    delivery: "followUp",
+  });
+  assert.equal(oversized.ok, false);
+  if (!oversized.ok) assert.equal(oversized.code, "message_too_large");
 
   const missingSequence = validateBridgeMessage({
     protocolVersion: PI_BRIDGE_PROTOCOL_VERSION,
