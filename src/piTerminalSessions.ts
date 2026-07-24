@@ -233,6 +233,10 @@ export class PiTerminalSessions implements vscode.Disposable {
       name: `Pi qcode ${bridgeId.slice(0, 8)}`,
       cwd,
       env,
+      // Pi's interactive TUI does not restore cleanly after a VS Code window
+      // reload. Terminate qcode-owned terminals instead of persisting them so
+      // the next message can start a fresh terminal and bridge.
+      isTransient: true,
       ...(terminalShell.shellPath ? { shellPath: terminalShell.shellPath } : {}),
     });
     const initialMessages = resolvedFilePath
