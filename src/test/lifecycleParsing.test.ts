@@ -28,3 +28,30 @@ test("duplicate lifecycle writers are idempotent and run-aware", () => {
   assert.equal(result.messages[1]?.timestamp, Date.parse("2026-01-01T00:00:05Z"));
   assert.deepEqual(result.warnings, []);
 });
+
+test("settles an assistant leaf selected with /tree when the live session is idle", () => {
+  const entries = [
+    { type: "custom", id: "1", parentId: null, customType: "pi-lifecycle", data: { event: "session_start", state: "idle" } },
+    { type: "message", id: "2", parentId: "1", message: { role: "user", content: "hello" } },
+    { type: "custom", id: "3", parentId: "2", customType: "pi-lifecycle", data: { event: "agent_start", state: "busy", runId: "run-a" } },
+    { type: "message", id: "4", parentId: "3", message: { role: "assistant", content: [{ type: "text", text: "selected reply" }] } },
+  ];
+  const content = entries.map(line).join("\n");
+
+  assert.deepEqual(
+    readSessionMessagesFromContent(content).messages.map(({ role, kind }) => ({ role, kind })),
+    [
+      { role: "user", kind: "message" },
+      { role: "thinking", kind: "thinking" },
+    ],
+  );
+  assert.deepEqual(
+    readSessionMessagesFromContent(content, {
+      settleActiveLifecycleRun: true,
+    }).messages.map(({ role, text }) => ({ role, text })),
+    [
+      { role: "user", text: "hello" },
+      { role: "assistant", text: "selected reply" },
+    ],
+  );
+});

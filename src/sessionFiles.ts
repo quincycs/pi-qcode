@@ -509,11 +509,17 @@ function parseSessionFile(filePath: string): RecentSession | null {
   }
 }
 
-export function readSessionMessagesFromContent(content: string): {
+export function readSessionMessagesFromContent(
+  content: string,
+  options: { settleActiveLifecycleRun?: boolean } = {},
+): {
   messages: SessionMessage[];
   warnings: SessionWarning[];
 } {
-  const state = readSessionMessageState(content, { skipContextUsage: true });
+  const state = readSessionMessageState(content, {
+    skipContextUsage: true,
+    settleActiveLifecycleRun: options.settleActiveLifecycleRun,
+  });
   return { messages: state.visibleMessages, warnings: getSessionWarnings(state) };
 }
 
@@ -525,14 +531,17 @@ export function readSessionContextUsageFromContent(
 
 function readSessionMessageState(
   content: string,
-  options: { skipContextUsage?: boolean } = {},
+  options: {
+    skipContextUsage?: boolean;
+    settleActiveLifecycleRun?: boolean;
+  } = {},
 ): SessionMessageState {
   const state = createEmptySessionMessageState();
 
   for (const line of selectActiveBranchLines(content)) {
     updateSessionMessageState(state, line, options);
   }
-  finalizeSessionMessageState(state);
+  finalizeSessionMessageState(state, options.settleActiveLifecycleRun);
 
   return state;
 }
@@ -638,9 +647,22 @@ function updateSessionMessageState(
   return true;
 }
 
-function finalizeSessionMessageState(state: SessionMessageState): void {
+function finalizeSessionMessageState(
+  state: SessionMessageState,
+  settleActiveLifecycleRun = false,
+): void {
   if (!state.hasSeenLifecycleEntry) {
     finalizeCompatibilityAssistantMessage(state);
+    return;
+  }
+
+  // /tree may make an assistant entry the leaf, leaving the persisted
+  // agent_end lifecycle entry on the abandoned child path. Live callers know
+  // whether Pi is idle and can treat that otherwise-active path as settled.
+  if (settleActiveLifecycleRun && state.activeLifecycleRun) {
+    state.activeLifecycleRun = false;
+    state.currentLifecycleRunId = undefined;
+    finalizePendingAssistantMessage(state);
   }
 }
 

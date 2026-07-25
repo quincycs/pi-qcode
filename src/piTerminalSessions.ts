@@ -1104,9 +1104,11 @@ function buildBridgePresentation(
     })
     .filter(Boolean)
     .join("\n");
-  const messages: SessionMessage[] = readSessionMessagesFromContent(
-    content,
-  ).messages.map((message) => ({
+  const messages: SessionMessage[] = readSessionMessagesFromContent(content, {
+    // Selecting an assistant entry in /tree leaves the run's agent_end entry
+    // on the old child path, even though the live Pi session is now idle.
+    settleActiveLifecycleRun: idle,
+  }).messages.map((message) => ({
     ...message,
     counts: message.counts ? { ...message.counts } : undefined,
     activatedSkills: message.activatedSkills
