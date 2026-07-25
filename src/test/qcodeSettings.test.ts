@@ -41,15 +41,29 @@ test("persists a What's new dismissal in settings once", async () => {
   ]);
 });
 
-test("settings UI writes preserve dismissed versions when omitted", async () => {
+test("settings UI writes preserve internal settings when omitted", async () => {
   const filePath = temporarySettingsFile();
   await dismissWhatsNewVersion("1.2.3", filePath);
+  const storedSettings = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  storedSettings.folderSettings = [{
+    path: "/workspace",
+    pinned: [{ filePath: "/sessions/one.jsonl", pinnedAt: 42 }],
+  }];
+  fs.writeFileSync(filePath, JSON.stringify(storedSettings));
 
   await writeQcodeSettings({ assistantSoundEnabled: true }, filePath);
 
   const settings = readQcodeSettings(filePath);
   assert.equal(settings.assistantSoundEnabled, true);
   assert.deepEqual(settings.dismissedWhatsNewVersions, ["1.2.3"]);
+  assert.deepEqual(settings.folderSettings, [{
+    path: "/workspace",
+    pinned: [{ filePath: "/sessions/one.jsonl", pinnedAt: 42 }],
+  }]);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(filePath, "utf8")).folderSettings,
+    storedSettings.folderSettings,
+  );
 });
 
 function temporarySettingsFile(): string {

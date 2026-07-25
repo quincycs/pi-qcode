@@ -12,6 +12,16 @@ export interface ProviderOption {
   cliArgs: string;
 }
 
+export interface PinnedSessionSetting {
+  filePath: string;
+  pinnedAt: number;
+}
+
+export interface FolderSetting {
+  path: string;
+  pinned: PinnedSessionSetting[];
+}
+
 export interface QcodeSettings {
   hashAutocompleteOptions: HashAutocompleteOption[];
   providerOptions: ProviderOption[];
@@ -19,6 +29,7 @@ export interface QcodeSettings {
   assistantSoundEnabled: boolean;
   assistantSoundPath: string;
   dismissedWhatsNewVersions: string[];
+  folderSettings: FolderSetting[];
 }
 
 const settingsDirectory = path.join(os.homedir(), ".pi", "qcode");
@@ -43,6 +54,7 @@ export function readQcodeSettings(filePath = settingsFilePath): QcodeSettings {
       assistantSoundEnabled: false,
       assistantSoundPath: "",
       dismissedWhatsNewVersions: [],
+      folderSettings: [],
     };
   }
 }
@@ -57,10 +69,18 @@ export async function writeQcodeSettings(
   const normalized = normalizeSettings(settings);
 
   // The settings UI does not edit internal state, so preserve it when omitted.
-  if (!Object.prototype.hasOwnProperty.call(record, "dismissedWhatsNewVersions")) {
-    normalized.dismissedWhatsNewVersions = readQcodeSettings(
-      filePath,
-    ).dismissedWhatsNewVersions;
+  if (
+    !Object.prototype.hasOwnProperty.call(record, "dismissedWhatsNewVersions") ||
+    !Object.prototype.hasOwnProperty.call(record, "folderSettings")
+  ) {
+    const existingSettings = readQcodeSettings(filePath);
+    if (!Object.prototype.hasOwnProperty.call(record, "dismissedWhatsNewVersions")) {
+      normalized.dismissedWhatsNewVersions =
+        existingSettings.dismissedWhatsNewVersions;
+    }
+    if (!Object.prototype.hasOwnProperty.call(record, "folderSettings")) {
+      normalized.folderSettings = existingSettings.folderSettings;
+    }
   }
 
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
@@ -130,6 +150,10 @@ function normalizeSettings(value: unknown): QcodeSettings {
       ]
     : [];
 
+  const folderSettings = Array.isArray(record.folderSettings)
+    ? record.folderSettings.flatMap(normalizeFolderSetting)
+    : [];
+
   return {
     hashAutocompleteOptions,
     providerOptions,
@@ -137,7 +161,37 @@ function normalizeSettings(value: unknown): QcodeSettings {
     assistantSoundEnabled,
     assistantSoundPath,
     dismissedWhatsNewVersions,
+    folderSettings,
   };
+}
+
+function normalizeFolderSetting(item: unknown): FolderSetting[] {
+  if (!item || typeof item !== "object") return [];
+
+  const record = item as Record<string, unknown>;
+  const folderPath = typeof record.path === "string" ? record.path.trim() : "";
+  if (!folderPath) return [];
+
+  const pinned = Array.isArray(record.pinned)
+    ? record.pinned.flatMap(normalizePinnedSessionSetting)
+    : [];
+
+  return [{ path: folderPath, pinned }];
+}
+
+function normalizePinnedSessionSetting(item: unknown): PinnedSessionSetting[] {
+  if (!item || typeof item !== "object") return [];
+
+  const record = item as Record<string, unknown>;
+  const filePath = typeof record.filePath === "string"
+    ? record.filePath.trim()
+    : "";
+  const pinnedAt = typeof record.pinnedAt === "number"
+    ? record.pinnedAt
+    : 0;
+  if (!filePath || !Number.isFinite(pinnedAt) || pinnedAt <= 0) return [];
+
+  return [{ filePath, pinnedAt }];
 }
 
 function normalizeHashAutocompleteOption(item: unknown): HashAutocompleteOption[] {

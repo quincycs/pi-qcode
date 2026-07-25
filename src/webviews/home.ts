@@ -1,5 +1,6 @@
 import type { RecentSession } from "../sessionFiles";
 import { getRecentSessions } from "../sessionFiles";
+import { getSessionPinnedAt } from "../sessionPins";
 import { escapeHtml } from "../utils";
 import type { WhatsNewRelease } from "../whatsNew";
 
@@ -8,9 +9,10 @@ export function renderHome(
   workspaceCwd: string | undefined,
   version: string,
   whatsNew?: WhatsNewRelease,
+  pinnedSessions: ReadonlyMap<string, number> = new Map(),
 ): string {
-  const sessions = getRecentSessions(workspaceCwd);
-  const groups = groupSessions(sessions);
+  const sessions = getRecentSessions(workspaceCwd, [...pinnedSessions.keys()]);
+  const groups = groupSessions(sessions, pinnedSessions);
 
   return `<!doctype html>
 <html lang="en">
@@ -162,6 +164,36 @@ export function renderHome(
     font-size: 12px;
     line-height: 1.5;
   }
+  .context-menu {
+    position: fixed;
+    z-index: 20;
+    min-width: 120px;
+    padding: 4px;
+    color: var(--vscode-menu-foreground, var(--vscode-foreground));
+    background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+    border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
+    border-radius: 4px;
+    box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+  }
+  .context-menu[hidden] { display: none; }
+  .context-menu-item {
+    display: block;
+    width: 100%;
+    padding: 5px 18px;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 2px;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .context-menu-item:hover,
+  .context-menu-item:focus-visible {
+    color: var(--vscode-menu-selectionForeground, var(--vscode-list-activeSelectionForeground));
+    background: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground));
+    outline: none;
+  }
   .whats-new-overlay {
     position: fixed;
     inset: 0;
@@ -267,6 +299,9 @@ export function renderHome(
       ${renderGroups(groups, sessions.length)}
     </section>
   </main>
+  <div class="context-menu" id="session-context-menu" role="menu" hidden>
+    <button type="button" class="context-menu-item" id="session-pin-action" role="menuitem">Pin</button>
+  </div>
   ${renderWhatsNew(whatsNew)}
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
@@ -297,14 +332,58 @@ export function renderHome(
       });
     }
 
+    const sessionContextMenu = document.getElementById('session-context-menu');
+    const sessionPinAction = document.getElementById('session-pin-action');
+    let contextSession = null;
+
+    const closeSessionContextMenu = () => {
+      sessionContextMenu.hidden = true;
+      contextSession = null;
+    };
+    const openSessionContextMenu = (event, session) => {
+      event.preventDefault();
+      contextSession = session;
+      sessionPinAction.textContent = session.dataset.pinned === 'true' ? 'Unpin' : 'Pin';
+      sessionContextMenu.hidden = false;
+      const bounds = sessionContextMenu.getBoundingClientRect();
+      sessionContextMenu.style.left = Math.max(4, Math.min(event.clientX, window.innerWidth - bounds.width - 4)) + 'px';
+      sessionContextMenu.style.top = Math.max(4, Math.min(event.clientY, window.innerHeight - bounds.height - 4)) + 'px';
+      sessionPinAction.focus();
+    };
+
     document.querySelectorAll('[data-open-session]').forEach((session) => {
       session.addEventListener('click', () => {
+        closeSessionContextMenu();
         vscode.postMessage({
           command: 'openSession',
           filePath: session.dataset.filePath || '',
         });
       });
+      session.addEventListener('contextmenu', (event) => {
+        openSessionContextMenu(event, session);
+      });
     });
+    sessionPinAction.addEventListener('click', () => {
+      if (!contextSession) return;
+      vscode.postMessage({
+        command: 'setSessionPinned',
+        filePath: contextSession.dataset.filePath || '',
+        pinned: contextSession.dataset.pinned !== 'true',
+      });
+      closeSessionContextMenu();
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if (!sessionContextMenu.hidden && !sessionContextMenu.contains(event.target)) {
+        closeSessionContextMenu();
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !sessionContextMenu.hidden) {
+        closeSessionContextMenu();
+      }
+    });
+    window.addEventListener('blur', closeSessionContextMenu);
+    document.querySelector('.list').addEventListener('scroll', closeSessionContextMenu);
   </script>
 </body>
 </html>`;
@@ -331,15 +410,32 @@ function renderWhatsNew(release?: WhatsNewRelease): string {
   </div>`;
 }
 
-function groupSessions(
+export function groupSessions(
   sessions: RecentSession[],
+  pinnedSessions: ReadonlyMap<string, number> = new Map(),
 ): Record<string, RecentSession[]> {
-  return sessions.reduce<Record<string, RecentSession[]>>((groups, session) => {
-    const group = dateGroup(session.lastActiveAt);
-    groups[group] = groups[group] || [];
-    groups[group].push(session);
-    return groups;
-  }, {});
+  const orderedSessions = [...sessions].sort((a, b) => {
+    const aPinnedAt = getSessionPinnedAt(pinnedSessions, a.filePath);
+    const bPinnedAt = getSessionPinnedAt(pinnedSessions, b.filePath);
+    if (aPinnedAt !== undefined && bPinnedAt !== undefined) {
+      return bPinnedAt - aPinnedAt;
+    }
+    if (aPinnedAt !== undefined) return -1;
+    if (bPinnedAt !== undefined) return 1;
+    return b.lastActiveAt.getTime() - a.lastActiveAt.getTime();
+  });
+
+  return orderedSessions.reduce<Record<string, RecentSession[]>>(
+    (groups, session) => {
+      const group = getSessionPinnedAt(pinnedSessions, session.filePath) !== undefined
+        ? "Pinned"
+        : dateGroup(session.lastActiveAt);
+      groups[group] = groups[group] || [];
+      groups[group].push(session);
+      return groups;
+    },
+    {},
+  );
 }
 
 function renderGroups(
@@ -350,18 +446,20 @@ function renderGroups(
     return '<div class="empty">No Pi sessions found.<br>Start Pi to create one.</div>';
   }
 
-  return ["Today", "Yesterday", "This Week", "Older"]
+  return ["Pinned", "Today", "Yesterday", "This Week", "Older"]
     .filter((group) => groups[group] && groups[group].length)
     .map(
       (group) => `
       <div class="group-header">${group}</div>
-      ${groups[group].map(renderSession).join("")}
+      ${groups[group]
+        .map((session) => renderSession(session, group === "Pinned"))
+        .join("")}
     `,
     )
     .join("");
 }
 
-function renderSession(session: RecentSession): string {
+function renderSession(session: RecentSession, pinned: boolean): string {
   const meta = [
     timeSince(session.lastActiveAt),
     `${session.messageCount} msg${session.messageCount === 1 ? "" : "s"}`,
@@ -371,7 +469,7 @@ function renderSession(session: RecentSession): string {
     .join(" - ");
 
   return `
-    <button type="button" class="session" title="${escapeHtml(session.fileName)}" data-open-session data-file-path="${escapeHtml(session.filePath)}">
+    <button type="button" class="session" title="${escapeHtml(session.fileName)}" data-open-session data-file-path="${escapeHtml(session.filePath)}" data-pinned="${pinned}">
       <div class="title-row">
         <div class="title">${escapeHtml(session.title)}</div>
       </div>

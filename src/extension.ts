@@ -28,7 +28,17 @@ import {
   writeQcodeSettings,
 } from "./qcodeSettings";
 import type { SessionDetail, SessionWarning } from "./sessionFiles";
-import { readSessionDetail, watchSessionDetail } from "./sessionFiles";
+import {
+  getSessionFolderForCwd,
+  isSessionFile,
+  readSessionDetail,
+  watchSessionDetail,
+} from "./sessionFiles";
+import {
+  readSessionPins,
+  sessionPinKey,
+  setSessionPinned,
+} from "./sessionPins";
 import { delay, getNonce } from "./utils";
 import { renderHome } from "./webviews/home";
 import { renderSessionDetail } from "./webviews/sessionDetail";
@@ -46,6 +56,7 @@ type Route =
 
 type WebviewMessage =
   | { command: "openSession"; filePath?: string }
+  | { command: "setSessionPinned"; filePath?: string; pinned?: boolean }
   | { command: "newSession" }
   | { command: "dismissWhatsNew"; version?: string }
   | { command: "ready" }
@@ -192,11 +203,13 @@ export function activate(context: vscode.ExtensionContext): void {
           const whatsNew = dismissedWhatsNewVersions.has(extensionVersion)
             ? undefined
             : getWhatsNewRelease(extensionVersion);
+          const workspaceCwd = getWorkspaceCwd();
           view.webview.html = renderHome(
             getNonce(),
-            getWorkspaceCwd(),
+            workspaceCwd,
             extensionVersion,
             whatsNew,
+            workspaceCwd ? readSessionPins(workspaceCwd) : new Map(),
           );
         };
 
@@ -566,6 +579,44 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (message.command === "openSession") {
             showSessionDetail(String(message.filePath || ""));
+          }
+
+          if (message.command === "setSessionPinned") {
+            const workspaceCwd = getWorkspaceCwd();
+            const filePath = String(message.filePath || "");
+            if (!workspaceCwd) {
+              void vscode.window.showInformationMessage(
+                "Open a folder to pin sessions for that workspace.",
+              );
+              return;
+            }
+            if (
+              !isSessionFile(filePath) ||
+              sessionPinKey(path.dirname(filePath)) !==
+                sessionPinKey(getSessionFolderForCwd(workspaceCwd))
+            ) {
+              return;
+            }
+
+            const workspaceKey = sessionPinKey(workspaceCwd);
+            void setSessionPinned(
+              workspaceCwd,
+              filePath,
+              message.pinned === true,
+            ).then(() => {
+              const currentWorkspaceCwd = getWorkspaceCwd();
+              if (
+                currentRoute.name === "home" &&
+                currentWorkspaceCwd &&
+                sessionPinKey(currentWorkspaceCwd) === workspaceKey
+              ) {
+                showHome();
+              }
+            }).catch((error) => {
+              void vscode.window.showErrorMessage(
+                `Unable to save session pin: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            });
           }
 
           if (message.command === "newSession") {

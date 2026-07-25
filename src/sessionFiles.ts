@@ -7,6 +7,7 @@ import {
   parseQcodeAttachmentBlock,
   type ChatAttachment,
 } from "./chatAttachments";
+import { sessionPinKey } from "./sessionPins";
 
 export interface RecentSession {
   id: string;
@@ -93,13 +94,21 @@ interface SessionFileCandidate {
 
 const RECENT_SESSION_LIMIT = 50;
 
-export function getRecentSessions(workspaceCwd?: string): RecentSession[] {
-  return getRecentSessionFileCandidates(workspaceCwd)
-    .slice(0, RECENT_SESSION_LIMIT)
+export function getRecentSessions(
+  workspaceCwd?: string,
+  pinnedFilePaths: readonly string[] = [],
+): RecentSession[] {
+  const candidates = getRecentSessionFileCandidates(workspaceCwd);
+  const pinnedPaths = new Set(pinnedFilePaths.map(sessionPinKey));
+  const selectedCandidates = candidates.filter((candidate, index) =>
+    index < RECENT_SESSION_LIMIT ||
+    pinnedPaths.has(sessionPinKey(candidate.filePath))
+  );
+
+  return selectedCandidates
     .map((candidate) => parseSessionFile(candidate.filePath))
     .filter((session): session is RecentSession => Boolean(session))
-    .sort((a, b) => b.lastActiveAt.getTime() - a.lastActiveAt.getTime())
-    .slice(0, RECENT_SESSION_LIMIT);
+    .sort((a, b) => b.lastActiveAt.getTime() - a.lastActiveAt.getTime());
 }
 
 export function readSessionDetail(filePath: string): SessionDetail {
