@@ -73,6 +73,19 @@ test("starts and resets the live elapsed timer with the thinking block", () => {
   assert.doesNotMatch(html, /Time elapsed since the last assistant message/);
 });
 
+test("shows thinking immediately after submitting a message", () => {
+  const html = renderSessionDetail("/tmp/session.jsonl", "nonce", {
+    title: "Session",
+    filePath: "/tmp/session.jsonl",
+    messages: [],
+  });
+
+  assert.match(
+    html,
+    /appendMessage\(\{\s+role: 'user',[\s\S]*?appendMessage\(\{\s+role: 'thinking',\s+kind: 'thinking',\s+text: '',\s+counts: \{\},/,
+  );
+});
+
 test("transitions the thinking block into a terminal user-input warning", () => {
   const html = renderSessionDetail("", "nonce", {
     title: "New Session",

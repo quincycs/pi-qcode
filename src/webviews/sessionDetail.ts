@@ -1182,16 +1182,21 @@ ${messageRenderingScript}
         clientMessageId,
       });
       removeDraftProviderOptions();
-      if (appendMessage({
+      appendMessage({
         role: 'user',
         kind: 'message',
         text: sentText,
         attachments: readyAttachments,
         clientMessageId,
         deliveryState: 'pending',
-      })) {
-        requestAnimationFrame(scrollLastMessageTop);
-      }
+      });
+      appendMessage({
+        role: 'thinking',
+        kind: 'thinking',
+        text: '',
+        counts: {},
+      });
+      requestAnimationFrame(scrollLastMessageTop);
       input.value = '';
       composerAttachments.splice(0, composerAttachments.length);
       renderComposerAttachments();

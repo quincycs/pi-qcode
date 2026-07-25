@@ -182,6 +182,7 @@ export class PiTerminalSessions implements vscode.Disposable {
           if (existing.optimisticUserMessages.includes(outbound)) {
             outbound.deliveryState = "failed";
             this.setVisibleDeliveryState(existing, clientMessageId, "failed");
+            removeThinking(existing.visibleMessages);
             this.emit(existing);
           }
           throw error;
@@ -711,6 +712,7 @@ export class PiTerminalSessions implements vscode.Disposable {
       unresolvedMessages.push(optimisticMessage);
     }
     session.optimisticUserMessages = unresolvedMessages;
+    if (unresolvedMessages.length) upsertThinking(session);
   }
 
   private applyUserInput(
@@ -871,6 +873,9 @@ export class PiTerminalSessions implements vscode.Disposable {
       clientMessageId,
       deliveryState: "pending",
     });
+    // Show activity immediately while a resumed terminal starts or a connected
+    // bridge accepts the prompt. Tool events can fill in the summary later.
+    upsertThinking(session);
     return outbound;
   }
 
@@ -1142,7 +1147,7 @@ function buildBridgePresentation(
   }
   if (!idle) {
     const thinking = createThinkingMessage(thinkingCounts);
-    if (thinking?.text) messages.push(thinking);
+    if (thinking) messages.push(thinking);
   }
   return {
     messages,
