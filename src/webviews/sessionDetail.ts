@@ -480,7 +480,7 @@ ${messageRenderingStyles}
       }
       loadNotificationAudioBuffer();
     };
-    const playNotificationSound = () => {
+    const playNotificationSoundInWebview = () => {
       if (!assistantSoundEnabled) return;
       const audioContext = getNotificationAudioContext();
       if (!audioContext) return;
@@ -508,6 +508,10 @@ ${messageRenderingStyles}
 
       loadAndPlay();
     };
+    const playNotificationSound = () => {
+      if (!assistantSoundEnabled) return;
+      vscode.postMessage({ command: 'playNotificationSound' });
+    };
 
     const resizeInput = () => {
       input.style.height = 'auto';
@@ -532,9 +536,6 @@ ${messageRenderingStyles}
     const renderedMessages = ${toScriptJson(session.messages)};
     const isThinkingMessage = (message) => Boolean(message && message.kind === 'thinking');
     const isAssistantMessage = (message) => Boolean(message && message.kind !== 'thinking' && message.role === 'assistant');
-    const countAssistantMessages = (messageList) => Array.isArray(messageList)
-      ? messageList.filter(isAssistantMessage).length
-      : 0;
     let thinkingStartedAt = undefined;
     let thinkingElapsedTimer = undefined;
     const formatElapsedTime = (elapsedMs) => {
@@ -745,10 +746,9 @@ ${messageRenderingScript}
       syncThinkingElapsedTimer();
       return !wasThinkingUpdate;
     };
-    const replaceMessages = (newMessages, shouldPlayAssistantSound = true) => {
+    const replaceMessages = (newMessages) => {
       if (!messages) return false;
       const shouldScroll = shouldScrollForReplacement(newMessages);
-      const previousAssistantMessageCount = countAssistantMessages(renderedMessages);
       const previousThinking = renderedMessages[renderedMessages.length - 1];
       const nextThinking = newMessages[newMessages.length - 1];
       resetThinkingElapsedIfChanged(previousThinking, nextThinking);
@@ -760,9 +760,6 @@ ${messageRenderingScript}
         return false;
       }
       newMessages.forEach((message) => messages.append(renderMessageElement(message)));
-      if (shouldPlayAssistantSound && countAssistantMessages(newMessages) > previousAssistantMessageCount) {
-        playNotificationSound();
-      }
       syncThinkingElapsedTimer();
       return shouldScroll;
     };
@@ -1122,11 +1119,15 @@ ${messageRenderingScript}
         return;
       }
 
+      if (data.command === 'playNotificationSoundFallback') {
+        playNotificationSoundInWebview();
+        return;
+      }
+
       if (data.command === 'sessionFileReady') {
         form.dataset.filePath = data.filePath || '';
         const shouldScroll = replaceMessages(
           Array.isArray(data.messages) ? data.messages : [],
-          data.playAssistantSound !== false,
         );
         updateContextUsage(data.contextUsage);
         updateSessionWarnings(data.warnings);
@@ -1136,7 +1137,7 @@ ${messageRenderingScript}
       }
 
       if (data.command === 'replaceMessages' && Array.isArray(data.messages)) {
-        const shouldScroll = replaceMessages(data.messages, data.playAssistantSound !== false);
+        const shouldScroll = replaceMessages(data.messages);
         updateContextUsage(data.contextUsage);
         updateSessionWarnings(data.warnings);
         updateUserInputWait(data.waitingForUser === true, data.waitingForUserMessage);

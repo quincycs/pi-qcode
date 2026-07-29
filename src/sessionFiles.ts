@@ -152,16 +152,21 @@ export function readSessionDetail(filePath: string): SessionDetail {
 export function watchSessionDetail(
   session: SessionDetail,
   webview: vscode.Webview,
+  onAssistantMessage?: () => void,
 ): vscode.Disposable | undefined {
   if (session.error || !session.filePath || !fs.existsSync(session.filePath)) {
     return undefined;
   }
 
+  let assistantMessageCount = countAssistantMessages(session.messages);
   return createSessionFileWatcher(
     session.filePath,
     session.fileSize ?? 0,
     session.messageState ?? createEmptySessionMessageState(),
     (messages, contextUsage, warnings) => {
+      const nextAssistantMessageCount = countAssistantMessages(messages);
+      if (nextAssistantMessageCount > assistantMessageCount) onAssistantMessage?.();
+      assistantMessageCount = nextAssistantMessageCount;
       webview.postMessage({
         command: "replaceMessages",
         messages,
@@ -170,6 +175,12 @@ export function watchSessionDetail(
       });
     },
   );
+}
+
+function countAssistantMessages(messages: SessionMessage[]): number {
+  return messages.filter(
+    (message) => message.role === "assistant" && message.kind !== "thinking",
+  ).length;
 }
 
 export function isSessionFile(filePath: string): boolean {

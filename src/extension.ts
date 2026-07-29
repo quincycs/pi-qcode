@@ -19,6 +19,7 @@ import {
 } from "./fileReferences";
 import { searchHashAutocompleteSuggestions } from "./hashAutocomplete";
 import { PI_BRIDGE_MAX_MESSAGE_BYTES } from "./piBridgeProtocol";
+import { playNotificationSoundFile } from "./notificationSound";
 import { PiTerminalSessions, type PiTerminalSessionView } from "./piTerminalSessions";
 import {
   dismissWhatsNewVersion,
@@ -67,6 +68,7 @@ type WebviewMessage =
   | { command: "confirmDeleteProviderOption"; index?: number; label?: string }
   | { command: "saveLastUsedProvider"; nickname?: string }
   | { command: "showSessionWarnings"; warnings?: unknown }
+  | { command: "playNotificationSound" }
   | { command: "sendMessage"; filePath?: string; text?: string; attachments?: unknown; providerCliArgs?: string; clientMessageId?: string }
   | { command: "savePastedAttachment"; requestId?: string; name?: unknown; mimeType?: unknown; size?: unknown; data?: unknown }
   | { command: "removePastedAttachment"; attachment?: unknown }
@@ -128,6 +130,19 @@ export function activate(context: vscode.ExtensionContext): void {
     if (path.isAbsolute(expandedPath)) return expandedPath;
 
     return path.resolve(getWorkspaceCwd() ?? os.homedir(), expandedPath);
+  };
+
+  const playConfiguredNotificationSound = async (
+    webview: vscode.Webview,
+  ): Promise<void> => {
+    const settings = readQcodeSettings();
+    if (!settings.assistantSoundEnabled) return;
+
+    const playedNatively = !vscode.env.remoteName &&
+      await playNotificationSoundFile(resolveAssistantSoundPath(settings));
+    if (!playedNatively) {
+      await webview.postMessage({ command: "playNotificationSoundFallback" });
+    }
   };
 
   const queueInputText = (text: string) => {
@@ -259,7 +274,13 @@ export function activate(context: vscode.ExtensionContext): void {
               waitingForUserMessage: bridgeSession?.waitingForUserMessage,
             },
           );
-          if (!hasBridgeBaseline) sessionWatcher = watchSessionDetail(session, view.webview);
+          if (!hasBridgeBaseline) {
+            sessionWatcher = watchSessionDetail(
+              session,
+              view.webview,
+              () => void playConfiguredNotificationSound(view.webview),
+            );
+          }
         };
 
         const showNewSessionDetail = () => {
@@ -295,6 +316,9 @@ export function activate(context: vscode.ExtensionContext): void {
           if (!routeMatches) return;
 
           stopSessionWatcher();
+          if (bridgeSession.playCompletionSound === true) {
+            void playConfiguredNotificationSound(view.webview);
+          }
           const sessionFileChanged = Boolean(bridgeSession.sessionFile &&
             (!currentRoute.filePath || path.resolve(currentRoute.filePath) !== path.resolve(bridgeSession.sessionFile)));
           if (bridgeSession.sessionFile && sessionFileChanged) {
@@ -312,7 +336,6 @@ export function activate(context: vscode.ExtensionContext): void {
               warnings: [],
               waitingForUser: bridgeSession.waitingForUser,
               waitingForUserMessage: bridgeSession.waitingForUserMessage,
-              playAssistantSound: bridgeSession.playCompletionSound === true,
             });
           } else {
             currentRoute = { ...currentRoute, bridgeId: bridgeSession.bridgeId };
@@ -323,7 +346,6 @@ export function activate(context: vscode.ExtensionContext): void {
               warnings: [],
               waitingForUser: bridgeSession.waitingForUser,
               waitingForUserMessage: bridgeSession.waitingForUserMessage,
-              playAssistantSound: bridgeSession.playCompletionSound === true,
             });
           }
         };
@@ -699,6 +721,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (message.command === "showSessionWarnings") {
             void handleShowSessionWarnings(message);
+          }
+
+          if (message.command === "playNotificationSound") {
+            void playConfiguredNotificationSound(view.webview);
           }
 
           if (
