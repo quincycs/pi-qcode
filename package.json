@@ -2,7 +2,7 @@
   "name": "pi-qcode",
   "displayName": "pi-qcode",
   "description": "Native UI vscode extension for pi coding agent. UI is powered by the pi cli in the terminal window.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "QuincyMitchell",
   "license": "MIT",
   "icon": "images/icon.png",
