@@ -21,6 +21,9 @@ https://github.com/user-attachments/assets/d4b264ce-1b24-4532-8c6b-93db5f4052b9
 - Rich text messages give you clickable links and rendered markdown.
 - Typeahead @filementions
 - Typeahead #hashcommands to inject customizable prompts. (basic prompt templates)
+- Pin sessions to keep it at the top of the session list.
+- Using /tree in terminal impacts the qcode UI immediately.
+- Paste in a screenshot or binary file reference.
 
 ## Prerequisites
 
