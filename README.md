@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/d4b264ce-1b24-4532-8c6b-93db5f4052b9
 - "Enter" key is a new line, encouraging you to slowdown and think before sending. Use `cmd+enter` (mac) or `ctrl+enter` (windows/linux) to send.
 - "Add to pi-qcode" is a context menu option to add highlighted code in the editor into a draft message to send to pi. This menu is also available in the vscode terminal. Hotkey: `cmd+;` (mac) or `ctrl+;` (windows/linux)
 - Shows all sessions for the open vscode folder (even external / pre-existing sessions).
-- Rich text messages give you clickable links and rendered markdown.
+- Rich text messages give you clickable links, rendered markdown, and Mermaid diagrams.
 - Typeahead @filementions
 - Typeahead #hashcommands to inject customizable prompts. (basic prompt templates)
 - Pin sessions to keep it at the top of the session list.

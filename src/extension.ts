@@ -109,12 +109,13 @@ export function activate(context: vscode.ExtensionContext): void {
         console.error("Unable to save session draft:", error);
       });
   };
-  const defaultAssistantSoundUri = vscode.Uri.joinPath(
-    context.extensionUri,
-    "media",
-    "chime.wav",
+  const extensionMediaRoot = vscode.Uri.joinPath(context.extensionUri, "media");
+  const defaultAssistantSoundUri = vscode.Uri.joinPath(extensionMediaRoot, "chime.wav");
+  const mermaidScriptUri = vscode.Uri.joinPath(
+    extensionMediaRoot,
+    "vendor",
+    "mermaid.min.js",
   );
-  const assistantSoundMediaRoot = vscode.Uri.joinPath(context.extensionUri, "media");
   const defaultAssistantSoundPath = defaultAssistantSoundUri.fsPath;
 
   const resolveAssistantSoundPath = (settings: QcodeSettings): string => {
@@ -189,7 +190,7 @@ export function activate(context: vscode.ExtensionContext): void {
         );
         const configureWebviewOptions = (settings: QcodeSettings = readQcodeSettings()) => {
           const soundPath = resolveAssistantSoundPath(settings);
-          const localResourceRoots = [assistantSoundMediaRoot];
+          const localResourceRoots = [extensionMediaRoot];
           if (soundPath !== defaultAssistantSoundPath) {
             localResourceRoots.push(vscode.Uri.file(path.dirname(soundPath)));
           }
@@ -200,6 +201,9 @@ export function activate(context: vscode.ExtensionContext): void {
           return view.webview.asWebviewUri(
             vscode.Uri.file(resolveAssistantSoundPath(settings)),
           ).toString();
+        };
+        const getMermaidScriptWebviewUri = (): string => {
+          return view.webview.asWebviewUri(mermaidScriptUri).toString();
         };
 
         configureWebviewOptions();
@@ -269,6 +273,7 @@ export function activate(context: vscode.ExtensionContext): void {
               initialAttachments: draft.attachments,
               assistantSoundEnabled: settings.assistantSoundEnabled,
               assistantSoundUri: getAssistantSoundWebviewUri(settings),
+              mermaidScriptUri: getMermaidScriptWebviewUri(),
               cspSource: view.webview.cspSource,
               waitingForUser: bridgeSession?.waitingForUser,
               waitingForUserMessage: bridgeSession?.waitingForUserMessage,
@@ -299,6 +304,7 @@ export function activate(context: vscode.ExtensionContext): void {
             lastUsedProviderNickname: settings.lastUsedProviderNickname,
             assistantSoundEnabled: settings.assistantSoundEnabled,
             assistantSoundUri: getAssistantSoundWebviewUri(settings),
+            mermaidScriptUri: getMermaidScriptWebviewUri(),
             cspSource: view.webview.cspSource,
           });
         };

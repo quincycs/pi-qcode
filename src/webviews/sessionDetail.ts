@@ -24,6 +24,7 @@ export function renderSessionDetail(
     lastUsedProviderNickname?: string;
     assistantSoundEnabled?: boolean;
     assistantSoundUri?: string;
+    mermaidScriptUri?: string;
     cspSource?: string;
     waitingForUser?: boolean;
     waitingForUserMessage?: string;
@@ -33,12 +34,13 @@ export function renderSessionDetail(
   const providerOptions = options.providerOptions ?? [];
   const lastUsedProviderNickname = options.lastUsedProviderNickname ?? "";
   const resourceCspSource = options.cspSource || "'none'";
+  const scriptResourceCspSource = options.cspSource ? ` ${options.cspSource}` : "";
 
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; connect-src ${resourceCspSource}; media-src ${resourceCspSource}; form-action 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'${scriptResourceCspSource}; connect-src ${resourceCspSource}; media-src ${resourceCspSource}; form-action 'none';">
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   body {
@@ -986,6 +988,10 @@ ${messageRenderingScript}
       document.getElementById('draft-provider-options')?.remove();
     };
     const initialInput = ${toScriptString(options.initialInput ?? "")};
+    qcodeMessageRendering.configureMermaid({
+      scriptUri: ${toScriptString(options.mermaidScriptUri ?? "")},
+      nonce: ${toScriptString(nonce)},
+    });
     qcodeMessageRendering.installClickHandlers(vscode);
     ['pointerdown', 'keydown', 'touchstart'].forEach((eventName) => {
       window.addEventListener(eventName, unlockNotificationAudio, { once: true, passive: true });

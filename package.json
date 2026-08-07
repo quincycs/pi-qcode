@@ -81,8 +81,8 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc --project tsconfig.json",
-    "watch": "tsc --watch --project tsconfig.json",
+    "compile": "node scripts/copy-mermaid.cjs && tsc --project tsconfig.json",
+    "watch": "node scripts/copy-mermaid.cjs && tsc --watch --project tsconfig.json",
     "test": "npm run compile && node --test dist/test/*.test.js",
     "package": "npm run compile && vsce package --allow-missing-repository --out pi-qcode.vsix && npm run package:verify",
     "package:verify": "node scripts/verify-vsix.cjs pi-qcode.vsix",
@@ -93,6 +93,7 @@
     "@types/node": "^25.9.1",
     "@types/vscode": "^1.92.0",
     "@vscode/vsce": "^3.9.2",
+    "mermaid": "11.16.1",
     "typescript": "^6.0.3"
   }
 }

@@ -49,6 +49,33 @@ export const messageRenderingStyles = String.raw`
   .message-text .code-block:last-child {
     margin-bottom: 0;
   }
+  .message-text .mermaid-block {
+    min-width: 0;
+  }
+  .message-text .mermaid-output {
+    max-width: 100%;
+    overflow-x: auto;
+    padding: 8px 0;
+    text-align: center;
+  }
+  .message-text .mermaid-output[hidden],
+  .message-text .mermaid-error[hidden] {
+    display: none !important;
+  }
+  .message-text .mermaid-output svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+  }
+  .message-text .mermaid-block[data-mermaid-state="rendered"] .mermaid-source {
+    display: none;
+  }
+  .message-text .mermaid-error {
+    margin-top: 5px;
+    color: var(--vscode-errorForeground);
+    font-size: 11px;
+  }
   .message-text pre {
     overflow-x: auto;
     padding: 10px;
@@ -69,7 +96,7 @@ export const messageRenderingStyles = String.raw`
     opacity: 0;
     pointer-events: none;
     color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
-    background: var(--vscode-button-secondaryBackground, var(--vscode-toolbar-hoverBackground));
+    background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground, var(--vscode-button-background)));
     border: 1px solid var(--vscode-widget-border, transparent);
     border-radius: 3px;
     cursor: pointer;
@@ -83,7 +110,7 @@ export const messageRenderingStyles = String.raw`
     pointer-events: auto;
   }
   .code-block-copy-button:hover {
-    background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+    background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground, var(--vscode-button-background)));
   }
   .code-block-copy-button:focus-visible {
     outline: 1px solid var(--vscode-focusBorder, #007acc);
@@ -270,6 +297,12 @@ export const messageRenderingScript = String.raw`
       const pendingFileReferenceRequests = new Set();
       let fileReferenceRequestId = 0;
       let vscodeApi = null;
+      let mermaidOptions = { scriptUri: '', nonce: '' };
+      let mermaidLoadPromise = null;
+      let mermaidRenderQueue = Promise.resolve();
+      let mermaidRenderId = 0;
+      let mermaidTheme = '';
+      let mermaidThemeObserver = null;
       const trimTrailingFilePunctuation = (value) => {
         let text = value;
         let trailing = '';
@@ -400,7 +433,13 @@ export const messageRenderingScript = String.raw`
         };
         const flushCode = () => {
           const languageClass = fenceLanguage ? ' class="language-' + escapeAttribute(fenceLanguage) + '"' : '';
-          html += '<div class="code-block"><button type="button" class="code-block-copy-button" aria-label="Copy code to clipboard" title="Copy code to clipboard">Copy</button><pre><code' + languageClass + '>' + escapeHtml(codeLines.join('\n')) + '</code></pre></div>';
+          const escapedCode = escapeHtml(codeLines.join('\n'));
+          const copyButton = '<button type="button" class="code-block-copy-button" aria-label="Copy code to clipboard" title="Copy code to clipboard">Copy</button>';
+          if (fenceLanguage.toLowerCase() === 'mermaid') {
+            html += '<div class="code-block mermaid-block" data-mermaid-state="pending">' + copyButton + '<div class="mermaid-output" hidden></div><pre class="mermaid-source"><code' + languageClass + '>' + escapedCode + '</code></pre><div class="mermaid-error" role="status" hidden>Unable to render Mermaid diagram. Source is shown instead.</div></div>';
+          } else {
+            html += '<div class="code-block">' + copyButton + '<pre><code' + languageClass + '>' + escapedCode + '</code></pre></div>';
+          }
           codeLines = [];
           fenceLanguage = '';
           fenceIndent = '';
@@ -515,6 +554,132 @@ export const messageRenderingScript = String.raw`
         flushList();
         return html;
       };
+      const getMermaidTheme = () =>
+        document.body.classList.contains('vscode-dark') ||
+        document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default';
+      const getMermaidThemeVariables = () => {
+        const styles = getComputedStyle(document.body);
+        const variables = { fontFamily: styles.fontFamily };
+        const addColor = (name, vscodeVariable) => {
+          const value = styles.getPropertyValue(vscodeVariable).trim();
+          if (value) variables[name] = value;
+        };
+        addColor('primaryTextColor', '--vscode-foreground');
+        addColor('secondaryTextColor', '--vscode-foreground');
+        addColor('tertiaryTextColor', '--vscode-foreground');
+        addColor('lineColor', '--vscode-descriptionForeground');
+        addColor('primaryColor', '--vscode-editorWidget-background');
+        addColor('secondaryColor', '--vscode-input-background');
+        addColor('tertiaryColor', '--vscode-editor-background');
+        addColor('primaryBorderColor', '--vscode-widget-border');
+        return variables;
+      };
+      const initializeMermaid = (mermaid) => {
+        const theme = getMermaidTheme();
+        if (theme === mermaidTheme) return;
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme,
+          themeVariables: getMermaidThemeVariables(),
+          maxTextSize: 50000,
+          flowchart: { htmlLabels: false },
+        });
+        mermaidTheme = theme;
+      };
+      const loadMermaid = () => {
+        if (globalThis.mermaid) return Promise.resolve(globalThis.mermaid);
+        if (mermaidLoadPromise) return mermaidLoadPromise;
+        if (!mermaidOptions.scriptUri) {
+          return Promise.reject(new Error('Mermaid renderer is unavailable.'));
+        }
+
+        mermaidLoadPromise = new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = mermaidOptions.scriptUri;
+          script.nonce = mermaidOptions.nonce;
+          script.async = true;
+          script.addEventListener('load', () => {
+            if (globalThis.mermaid) resolve(globalThis.mermaid);
+            else reject(new Error('Mermaid renderer did not initialize.'));
+          }, { once: true });
+          script.addEventListener('error', () => {
+            reject(new Error('Unable to load Mermaid renderer.'));
+          }, { once: true });
+          document.head.append(script);
+        });
+        return mermaidLoadPromise;
+      };
+      const showMermaidFallback = (block) => {
+        const output = block.querySelector('.mermaid-output');
+        const error = block.querySelector('.mermaid-error');
+        if (output) {
+          output.replaceChildren();
+          output.hidden = true;
+        }
+        if (error) error.hidden = false;
+        block.dataset.mermaidState = 'error';
+      };
+      const queueMermaidBlock = (block) => {
+        const source = block.querySelector('.mermaid-source code')?.textContent || '';
+        const output = block.querySelector('.mermaid-output');
+        const error = block.querySelector('.mermaid-error');
+        if (!output || !source.trim()) {
+          showMermaidFallback(block);
+          return;
+        }
+
+        const attempt = ++mermaidRenderId;
+        block.dataset.mermaidAttempt = String(attempt);
+        block.dataset.mermaidState = 'pending';
+        output.hidden = true;
+        if (error) error.hidden = true;
+
+        const render = async () => {
+          if (!block.isConnected || block.dataset.mermaidAttempt !== String(attempt)) return;
+          try {
+            const mermaid = await loadMermaid();
+            if (!block.isConnected || block.dataset.mermaidAttempt !== String(attempt)) return;
+            initializeMermaid(mermaid);
+            const result = await mermaid.render('qcode-mermaid-' + attempt, source);
+            if (!block.isConnected || block.dataset.mermaidAttempt !== String(attempt)) return;
+            output.innerHTML = result.svg;
+            output.hidden = false;
+            block.dataset.mermaidState = 'rendered';
+            const svg = output.querySelector('svg');
+            if (svg) {
+              svg.setAttribute('role', 'img');
+              svg.setAttribute('aria-label', 'Mermaid diagram');
+            }
+          } catch {
+            if (block.isConnected && block.dataset.mermaidAttempt === String(attempt)) {
+              showMermaidFallback(block);
+            }
+          }
+        };
+        const queuedRender = mermaidRenderQueue.then(render, render);
+        mermaidRenderQueue = queuedRender.catch(() => {});
+      };
+      const renderMermaidDiagrams = (root) => {
+        if (!root || typeof root.querySelectorAll !== 'function') return;
+        root.querySelectorAll('.mermaid-block').forEach(queueMermaidBlock);
+      };
+      const configureMermaid = (options = {}) => {
+        mermaidOptions = {
+          scriptUri: String(options.scriptUri || ''),
+          nonce: String(options.nonce || ''),
+        };
+        if (mermaidThemeObserver) return;
+        mermaidThemeObserver = new MutationObserver(() => {
+          const nextTheme = getMermaidTheme();
+          if (nextTheme === mermaidTheme) return;
+          mermaidTheme = '';
+          renderMermaidDiagrams(document);
+        });
+        mermaidThemeObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+      };
       const renderPlainText = (text) => renderPlainSegment(String(text || '')).replace(/\n/g, '<br>');
       const formatAttachmentSize = (value) => {
         const size = Number(value);
@@ -590,6 +755,7 @@ export const messageRenderingScript = String.raw`
         element.dataset.messageKind = message.kind || 'message';
         element.dataset.messageText = rawText;
         element.innerHTML = isMarkdown ? renderMarkdown(text) : renderPlainText(text);
+        if (isMarkdown) renderMermaidDiagrams(element);
         flushFileReferenceChecks();
       };
       const renderExistingMessages = () => {
@@ -743,7 +909,7 @@ export const messageRenderingScript = String.raw`
         });
       };
 
-      return { createAttachmentRow, renderAttachmentList, renderExistingMessages, renderMessageTextElement, installClickHandlers };
+      return { configureMermaid, createAttachmentRow, renderAttachmentList, renderExistingMessages, renderMessageTextElement, installClickHandlers };
     })();
 `;
 

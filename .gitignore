@@ -3,3 +3,4 @@ dist
 *.vsix
 .DS_Store
 _screenshots
+media/vendor/mermaid.min.js
