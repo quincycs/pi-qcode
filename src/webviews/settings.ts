@@ -1,11 +1,14 @@
 import type { QcodeSettings } from "../qcodeSettings";
 import { escapeHtml } from "../utils";
+import type { WhatsNewRelease } from "../whatsNew";
+import { renderWhatsNew, whatsNewStyles } from "./whatsNew";
 
 export function renderSettings(
   nonce: string,
   settings: QcodeSettings,
   settingsFilePath: string,
   defaultAssistantSoundPath: string,
+  whatsNew?: WhatsNewRelease,
 ): string {
   return `<!doctype html>
 <html lang="en">
@@ -48,7 +51,8 @@ export function renderSettings(
   .add-button,
   .save-button,
   .cancel-button,
-  .delete-button { padding: 4px 8px; }
+  .delete-button,
+  .whats-new-button { padding: 4px 8px; }
   .home-button {
     padding: 2px 8px;
     font-size: 18px;
@@ -206,10 +210,15 @@ export function renderSettings(
     border-radius: 4px;
     text-align: center;
   }
+  .whats-new-section {
+    padding-top: 16px;
+    border-top: 1px solid var(--vscode-widget-border, transparent);
+  }
+${whatsNewStyles}
 </style>
 </head>
 <body>
-  <main class="settings">
+  <main class="settings" id="settings">
     <header class="header">
       <button type="button" class="home-button" id="home-button" aria-label="Home" title="Home">←</button>
       <div class="title">Settings</div>
@@ -247,8 +256,13 @@ export function renderSettings(
       </section>
 
       <div class="status" id="status" aria-live="polite"></div>
+
+      <section class="settings-section whats-new-section" aria-label="About">
+        <button type="button" class="whats-new-button" id="whats-new-button"${whatsNew ? "" : " disabled"}>What's new</button>
+      </section>
     </section>
   </main>
+  ${renderWhatsNew(whatsNew, true)}
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const providerOptionsContainer = document.getElementById('provider-options');
@@ -653,6 +667,31 @@ export function renderSettings(
     document.getElementById('home-button').addEventListener('click', () => {
       vscode.postMessage({ command: 'home' });
     });
+
+    const settingsView = document.getElementById('settings');
+    const whatsNewButton = document.getElementById('whats-new-button');
+    const whatsNewOverlay = document.getElementById('whats-new-overlay');
+    const dismissWhatsNew = () => {
+      if (!whatsNewOverlay || whatsNewOverlay.hidden) return;
+      whatsNewOverlay.hidden = true;
+      settingsView.removeAttribute('inert');
+      whatsNewButton.focus();
+    };
+    whatsNewButton.addEventListener('click', () => {
+      if (!whatsNewOverlay) return;
+      whatsNewOverlay.hidden = false;
+      settingsView.setAttribute('inert', '');
+      document.getElementById('whats-new-dismiss').focus();
+    });
+    if (whatsNewOverlay) {
+      whatsNewOverlay.querySelectorAll('[data-dismiss-whats-new]').forEach((button) => {
+        button.addEventListener('click', dismissWhatsNew);
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') dismissWhatsNew();
+      });
+    }
+
     assistantSoundEnabledInput.addEventListener('change', () => {
       const nextAssistantSoundEnabled = Boolean(assistantSoundEnabledInput.checked);
       if (editing && !discardPendingEdit()) {

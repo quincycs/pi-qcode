@@ -243,6 +243,7 @@ export function activate(context: vscode.ExtensionContext): void {
             settings,
             getSettingsFilePath(),
             defaultAssistantSoundPath,
+            getWhatsNewRelease(extensionVersion),
           );
         };
 

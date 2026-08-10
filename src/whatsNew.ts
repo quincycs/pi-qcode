@@ -11,6 +11,11 @@ export interface WhatsNewRelease {
 // Update these items for each release. The version comes from package.json at runtime.
 const currentReleaseItems: WhatsNewItem[] = [
   {
+    title: "V0.1.2 - Mermaid support",
+    description:
+      "Mermaid diagrams are now supported in pi and qcode rendering.",
+  },
+  {
     title: "V0.1.1 - Fix notification sound reliability",
     description: "The notification sound now plays reliably.",
   },
