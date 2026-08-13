@@ -1,6 +1,9 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import { messageRenderingScript } from "../webviews/messageRendering";
+import {
+  messageRenderingScript,
+  messageRenderingStyles,
+} from "../webviews/messageRendering";
 import { renderSessionDetail } from "../webviews/sessionDetail";
 
 test("offers Reply alongside Copy for highlighted session text", () => {
@@ -32,6 +35,7 @@ test("appends highlighted text to the composer as a fenced reply", () => {
 
 test("keeps Reply hidden when the context menu is for a whole message", () => {
   assert.match(messageRenderingScript, /replyButton\.hidden = typeof onReply !== 'function'/);
+  assert.match(messageRenderingStyles, /\.qcode-context-menu-button\[hidden\][^{]*\{\s*display: none !important;/);
   assert.match(
     messageRenderingScript,
     /showContextMenu\(vscode, 'Copy message', getRawMessageText\(messageElement\), event\.clientX, event\.clientY\)/,

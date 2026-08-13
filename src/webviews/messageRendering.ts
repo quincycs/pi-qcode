@@ -241,7 +241,8 @@ export const messageRenderingStyles = String.raw`
   .attachment-row.is-error .attachment-meta {
     color: var(--vscode-errorForeground);
   }
-  .qcode-context-menu[hidden] {
+  .qcode-context-menu[hidden],
+  .qcode-context-menu-button[hidden] {
     display: none !important;
   }
   .qcode-context-menu {
