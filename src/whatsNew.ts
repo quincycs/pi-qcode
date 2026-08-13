@@ -11,6 +11,11 @@ export interface WhatsNewRelease {
 // Update these items for each release. The version comes from package.json at runtime.
 const currentReleaseItems: WhatsNewItem[] = [
   {
+    title: "V0.1.3 - Reply",
+    description:
+      "Highlight text and right click to reply. This will add the text to the input box to save you a copy/paste.",
+  },
+  {
     title: "V0.1.2 - Mermaid support",
     description:
       "Mermaid diagrams are now supported in pi and qcode rendering.",
