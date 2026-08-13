@@ -34,7 +34,9 @@ export function renderSessionDetail(
   const providerOptions = options.providerOptions ?? [];
   const lastUsedProviderNickname = options.lastUsedProviderNickname ?? "";
   const resourceCspSource = options.cspSource || "'none'";
-  const scriptResourceCspSource = options.cspSource ? ` ${options.cspSource}` : "";
+  const scriptResourceCspSource = options.cspSource
+    ? ` ${options.cspSource}`
+    : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -364,11 +366,13 @@ ${messageRenderingStyles}
     const lastUsedProviderNickname = ${toScriptJson(lastUsedProviderNickname)};
     let sessionWarnings = [];
     let waitingForUserActive = false;
-    const composerAttachments = ${toScriptJson((options.initialAttachments ?? []).map((attachment) => ({
-      requestId: "",
-      status: "ready",
-      attachment,
-    })))};
+    const composerAttachments = ${toScriptJson(
+      (options.initialAttachments ?? []).map((attachment) => ({
+        requestId: "",
+        status: "ready",
+        attachment,
+      })),
+    )};
     const maxChatAttachments = ${MAX_CHAT_ATTACHMENTS};
     const maxChatAttachmentsTotalBytes = ${MAX_CHAT_ATTACHMENTS_TOTAL_BYTES};
     const discardedAttachmentRequests = new Set();
@@ -971,6 +975,12 @@ ${messageRenderingScript}
       updateSubmitButton();
       input.focus();
     };
+    const addReplyToInput = (text) => {
+      if (!text) return;
+      const lineBreak = String.fromCharCode(10);
+      const codeFence = String.fromCharCode(96).repeat(3);
+      addToInput('RE:' + lineBreak + codeFence + lineBreak + text + lineBreak + codeFence + lineBreak);
+    };
     const getSelectedProviderOption = () => {
       if (form.dataset.filePath) return undefined;
 
@@ -992,7 +1002,7 @@ ${messageRenderingScript}
       scriptUri: ${toScriptString(options.mermaidScriptUri ?? "")},
       nonce: ${toScriptString(nonce)},
     });
-    qcodeMessageRendering.installClickHandlers(vscode);
+    qcodeMessageRendering.installClickHandlers(vscode, { onReply: addReplyToInput });
     ['pointerdown', 'keydown', 'touchstart'].forEach((eventName) => {
       window.addEventListener(eventName, unlockNotificationAudio, { once: true, passive: true });
     });

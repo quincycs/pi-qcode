@@ -783,7 +783,8 @@ export const messageRenderingScript = String.raw`
         if (!textElement) return '';
         return textElement.dataset.messageText ?? textElement.textContent ?? '';
       };
-      let contextMenuCopyText = '';
+      let contextMenuText = '';
+      let contextMenuReplyHandler = null;
       const ensureContextMenu = (vscode) => {
         let menu = document.querySelector('.qcode-context-menu');
         if (menu) return menu;
@@ -793,26 +794,46 @@ export const messageRenderingScript = String.raw`
         menu.hidden = true;
         menu.setAttribute('role', 'menu');
 
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'qcode-context-menu-button';
-        button.setAttribute('role', 'menuitem');
-        button.addEventListener('click', () => {
-          const text = contextMenuCopyText;
-          contextMenuCopyText = '';
+        const copyButton = document.createElement('button');
+        copyButton.type = 'button';
+        copyButton.className = 'qcode-context-menu-button';
+        copyButton.dataset.contextMenuAction = 'copy';
+        copyButton.setAttribute('role', 'menuitem');
+        copyButton.addEventListener('click', () => {
+          const text = contextMenuText;
+          contextMenuText = '';
+          contextMenuReplyHandler = null;
           menu.hidden = true;
           vscode.postMessage({ command: 'copyToClipboard', text });
         });
 
-        menu.append(button);
+        const replyButton = document.createElement('button');
+        replyButton.type = 'button';
+        replyButton.className = 'qcode-context-menu-button';
+        replyButton.dataset.contextMenuAction = 'reply';
+        replyButton.textContent = 'Reply';
+        replyButton.setAttribute('role', 'menuitem');
+        replyButton.addEventListener('click', () => {
+          const text = contextMenuText;
+          const reply = contextMenuReplyHandler;
+          contextMenuText = '';
+          contextMenuReplyHandler = null;
+          menu.hidden = true;
+          if (reply) reply(text);
+        });
+
+        menu.append(copyButton, replyButton);
         document.body.append(menu);
         return menu;
       };
-      const showContextMenu = (vscode, label, text, clientX, clientY) => {
+      const showContextMenu = (vscode, label, text, clientX, clientY, onReply = null) => {
         const menu = ensureContextMenu(vscode);
-        const button = menu.querySelector('.qcode-context-menu-button');
-        button.textContent = label;
-        contextMenuCopyText = String(text || '');
+        const copyButton = menu.querySelector('[data-context-menu-action="copy"]');
+        const replyButton = menu.querySelector('[data-context-menu-action="reply"]');
+        copyButton.textContent = label;
+        replyButton.hidden = typeof onReply !== 'function';
+        contextMenuText = String(text || '');
+        contextMenuReplyHandler = onReply;
         menu.hidden = false;
         menu.style.left = clientX + 'px';
         menu.style.top = clientY + 'px';
@@ -823,14 +844,14 @@ export const messageRenderingScript = String.raw`
         const top = Math.max(padding, Math.min(clientY, window.innerHeight - rect.height - padding));
         menu.style.left = left + 'px';
         menu.style.top = top + 'px';
-        button.focus();
       };
       const hideContextMenu = () => {
         const menu = document.querySelector('.qcode-context-menu');
         if (menu) menu.hidden = true;
       };
-      const installClickHandlers = (vscode) => {
+      const installClickHandlers = (vscode, options = {}) => {
         vscodeApi = vscode;
+        const onReply = typeof options.onReply === 'function' ? options.onReply : null;
         window.addEventListener('message', (event) => {
           const data = event.data;
           if (!data || data.command !== 'fileReferenceResolution' || !data.results) return;
@@ -850,7 +871,7 @@ export const messageRenderingScript = String.raw`
           const selectedText = getSelectedPageText();
           if (selectedText) {
             event.preventDefault();
-            showContextMenu(vscode, 'Copy', selectedText, event.clientX, event.clientY);
+            showContextMenu(vscode, 'Copy', selectedText, event.clientX, event.clientY, onReply);
             return;
           }
 
