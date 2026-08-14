@@ -172,7 +172,7 @@ export class PiTerminalSessions implements vscode.Disposable {
           await this.sendCommand(existing, "send_user_message", {
             clientMessageId,
             text,
-            delivery: "followUp",
+            delivery: "steer",
           });
           if (outbound.deliveryState === "pending") {
             outbound.deliveryState = "accepted";

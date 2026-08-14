@@ -49,7 +49,7 @@ test("validates authentication, versions, and message limits", () => {
     type: "send_user_message",
     requestId: "3",
     text: "hello",
-    delivery: "followUp",
+    delivery: "steer",
   });
   assert.equal(missingClientId.ok, false);
   const send = validateBridgeCommand({
@@ -58,17 +58,28 @@ test("validates authentication, versions, and message limits", () => {
     requestId: "4",
     clientMessageId: "client-1",
     text: "hello",
-    delivery: "followUp",
+    delivery: "steer",
   });
   assert.equal(send.ok, true);
 
-  const oversized = validateBridgeCommand({
+  const followUp = validateBridgeCommand({
     protocolVersion: PI_BRIDGE_PROTOCOL_VERSION,
     type: "send_user_message",
     requestId: "5",
     clientMessageId: "client-2",
-    text: "a".repeat(PI_BRIDGE_MAX_MESSAGE_BYTES + 1),
+    text: "hello",
     delivery: "followUp",
+  });
+  assert.equal(followUp.ok, false);
+  if (!followUp.ok) assert.equal(followUp.code, "invalid_delivery");
+
+  const oversized = validateBridgeCommand({
+    protocolVersion: PI_BRIDGE_PROTOCOL_VERSION,
+    type: "send_user_message",
+    requestId: "6",
+    clientMessageId: "client-3",
+    text: "a".repeat(PI_BRIDGE_MAX_MESSAGE_BYTES + 1),
+    delivery: "steer",
   });
   assert.equal(oversized.ok, false);
   if (!oversized.ok) assert.equal(oversized.code, "message_too_large");

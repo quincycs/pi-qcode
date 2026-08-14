@@ -151,7 +151,7 @@ export interface SendUserMessageCommand extends BridgeCommandBase {
   type: "send_user_message";
   clientMessageId: string;
   text: string;
-  delivery: "followUp";
+  delivery: "steer";
 }
 
 export interface RequestSnapshotCommand extends BridgeCommandBase {
@@ -358,8 +358,8 @@ export function validateBridgeCommand(value: unknown):
     if (Buffer.byteLength(record.text, "utf8") > PI_BRIDGE_MAX_MESSAGE_BYTES) {
       return { ...invalid("message_too_large", `Message exceeds ${PI_BRIDGE_MAX_MESSAGE_BYTES} bytes.`), requestId };
     }
-    if (record.delivery !== "followUp") {
-      return { ...invalid("invalid_delivery", "Only followUp delivery is supported."), requestId };
+    if (record.delivery !== "steer") {
+      return { ...invalid("invalid_delivery", "Only steer delivery is supported."), requestId };
     }
     return { ok: true, command: record as unknown as SendUserMessageCommand };
   }

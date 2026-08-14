@@ -467,11 +467,11 @@ export default function qcodeBridge(pi: ExtensionAPI): void {
         });
         return;
       }
-      if (record.delivery !== "followUp") {
+      if (record.delivery !== "steer") {
         ackAndRemember(client, requestId, {
           ok: false,
           code: "invalid_delivery",
-          message: "Only followUp delivery is supported.",
+          message: "Only steer delivery is supported.",
         });
         return;
       }
@@ -493,7 +493,7 @@ export default function qcodeBridge(pi: ExtensionAPI): void {
       correlatedInputs.push(correlation);
       try {
         if (ctx.isIdle()) pi.sendUserMessage(text);
-        else pi.sendUserMessage(text, { deliverAs: "followUp" });
+        else pi.sendUserMessage(text, { deliverAs: "steer" });
         rememberBounded(
           processState.acceptedClientMessageIds,
           clientCacheKey,
