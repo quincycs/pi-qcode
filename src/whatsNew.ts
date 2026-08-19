@@ -11,6 +11,11 @@ export interface WhatsNewRelease {
 // Update these items for each release. The version comes from package.json at runtime.
 const currentReleaseItems: WhatsNewItem[] = [
   {
+    title: "V0.1.5 - Steer instead of followup",
+    description:
+      "Sending a message while the model is busy will inject the message into the soonest possible point without aborting.  Previously this would send a followup message after the whole turn was complete.",
+  },
+  {
     title: "V0.1.3 - Reply",
     description:
       "Highlight text and right click to reply. This will add the text to the input box to save you a copy/paste.",
