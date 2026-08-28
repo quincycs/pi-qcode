@@ -27,7 +27,7 @@ https://github.com/user-attachments/assets/d4b264ce-1b24-4532-8c6b-93db5f4052b9
 
 ## Prerequisites
 
-Install and authenticate the [Pi CLI](https://pi.dev)
+Install and authenticate the latest [Pi CLI](https://pi.dev).
 
 No additional Pi extensions are required. qcode explicitly loads its bundled bridge extension into every Pi terminal it creates.
 
@@ -107,34 +107,6 @@ https://github.com/user-attachments/assets/378e3deb-4df9-46ee-8145-32276db4d62e
 **How does the Pi bridge work?**
 
 qcode starts an ordinary, visible Pi terminal and loads its dependency-free bridge with `pi -e`. The terminal's Pi process remains the sole owner of the session, so you can click the terminal and use the Pi TUI at any time. The bridge only transports structured events and user messages; it does not add tools, prompts, or model context. It costs 0 tokens.
-
-**How can a Pi extension tell qcode that the terminal is waiting for user input?**
-
-Pi does not currently expose terminal-dialog lifecycle events. An extension that opens a blocking `ctx.ui` prompt can publish paired events on Pi's shared `pi-lifecycle` event channel. qcode then displays a notice telling the user to open the Pi terminal.
-
-```ts
-const waitId = `my-extension:${event.toolCallId}`;
-
-pi.events.emit("pi-lifecycle", {
-  version: 1,
-  event: "user_input_wait_start",
-  waitId,
-  message: "Approval is required.", // Optional; do not include sensitive data.
-});
-
-try {
-  const choice = await ctx.ui.select("Continue?", ["Yes", "No"]);
-  // Handle the choice.
-} finally {
-  pi.events.emit("pi-lifecycle", {
-    version: 1,
-    event: "user_input_wait_end",
-    waitId,
-  });
-}
-```
-
-Each wait must have a non-empty ID that is unique among currently open prompts. Always emit the matching `user_input_wait_end` from a `finally` block so Escape, errors, and cancellation clear the notice. These events are process-local and add no model context or token cost. The qcode bridge retains currently open waits in memory so a bridge socket reconnection still reports the correct state.
 
 **Does it work on windows?**
 

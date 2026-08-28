@@ -18,6 +18,7 @@ const ENV_TOKEN = "QCODE_BRIDGE_TOKEN";
 const ENV_REGISTRATION = "QCODE_BRIDGE_REGISTRATION";
 const ENV_INITIAL_CLIENT_MESSAGE_ID = "QCODE_INITIAL_CLIENT_MESSAGE_ID";
 const IDEMPOTENCY_CACHE_SIZE = 256;
+const UI_PROMPT_WAIT_ID = "pi:ui-prompt";
 
 type JsonRecord = Record<string, unknown>;
 type Client = {
@@ -579,34 +580,24 @@ export default function qcodeBridge(pi: ExtensionAPI): void {
     await writeRegistration(ctx);
   });
 
-  pi.events.on("pi-lifecycle", (value) => {
-    const event = readRecord(value);
-    const eventName = stringValue(event?.event);
-    const waitId = stringValue(event?.waitId);
-    if (
-      event?.version !== 1 ||
-      !waitId ||
-      (eventName !== "user_input_wait_start" &&
-        eventName !== "user_input_wait_end")
-    ) return;
-
-    if (eventName === "user_input_wait_start") {
-      const message = truncateText(stringValue(event.message) || "", 4 * 1024) || undefined;
-      activeUserInputWaits.set(waitId, { waitId, ...(message ? { message } : {}) });
-      publish({
-        ...base("user_input_wait_start"),
-        waitId,
-        ...(message ? { message } : {}),
-      });
-      return;
-    }
-
-    const activeWait = activeUserInputWaits.get(waitId);
-    activeUserInputWaits.delete(waitId);
+  pi.on("ui_prompt_start", (event) => {
+    if (activeUserInputWaits.has(UI_PROMPT_WAIT_ID)) return;
+    const message = truncateText(event.title || "", 4 * 1024) || undefined;
+    activeUserInputWaits.set(UI_PROMPT_WAIT_ID, {
+      waitId: UI_PROMPT_WAIT_ID,
+      ...(message ? { message } : {}),
+    });
+    publish({
+      ...base("user_input_wait_start"),
+      waitId: UI_PROMPT_WAIT_ID,
+      ...(message ? { message } : {}),
+    });
+  });
+  pi.on("ui_prompt_end", () => {
+    if (!activeUserInputWaits.delete(UI_PROMPT_WAIT_ID)) return;
     publish({
       ...base("user_input_wait_end"),
-      waitId,
-      ...(activeWait?.message ? { message: activeWait.message } : {}),
+      waitId: UI_PROMPT_WAIT_ID,
     });
   });
 
@@ -659,7 +650,6 @@ export default function qcodeBridge(pi: ExtensionAPI): void {
     publishState(ctx);
   });
   pi.on("agent_settled", (_event, ctx) => {
-    activeUserInputWaits.clear();
     const runId = currentRunId;
     const elapsedMs =
       currentRunStartedAt === undefined
