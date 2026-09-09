@@ -11,28 +11,14 @@ export interface WhatsNewRelease {
 // Update these items for each release. The version comes from package.json at runtime.
 const currentReleaseItems: WhatsNewItem[] = [
   {
+    title: "V0.1.7 - Busy indicator",
+    description:
+      "'busy' is shown on working sessions. Notifications activate for any session of the window. Model is shown on session.",
+  },
+  {
     title: "V0.1.6 - Support Extension UI prompt events",
     description:
       "Please update pi to 0.84.4+ , which now emits events that qcode knows there's a terminal blocking action that needs to be addressed. Previously recommended workarounds of emitting pi-lifecycle events are no longer needed.",
-  },
-  {
-    title: "V0.1.5 - Steer instead of followup",
-    description:
-      "Sending a message while the model is busy will inject the message into the soonest possible point without aborting.  Previously this would send a followup message after the whole turn was complete.",
-  },
-  {
-    title: "V0.1.3 - Reply",
-    description:
-      "Highlight text and right click to reply. This will add the text to the input box to save you a copy/paste.",
-  },
-  {
-    title: "V0.1.2 - Mermaid support",
-    description:
-      "Mermaid diagrams are now supported in pi and qcode rendering.",
-  },
-  {
-    title: "V0.1.1 - Fix notification sound reliability",
-    description: "The notification sound now plays reliably.",
   },
   {
     title: "V0.1.0 - No more required extensions. No wasted tokens.",
