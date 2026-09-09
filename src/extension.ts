@@ -20,6 +20,7 @@ import {
 import { searchHashAutocompleteSuggestions } from "./hashAutocomplete";
 import { PI_BRIDGE_MAX_MESSAGE_BYTES } from "./piBridgeProtocol";
 import { playNotificationSoundFile } from "./notificationSound";
+import { watchSessionCompletionSounds } from "./sessionNotifications";
 import { PiTerminalSessions, type PiTerminalSessionView } from "./piTerminalSessions";
 import {
   dismissWhatsNewVersion,
@@ -133,8 +134,9 @@ export function activate(context: vscode.ExtensionContext): void {
     return path.resolve(getWorkspaceCwd() ?? os.homedir(), expandedPath);
   };
 
+  let notificationWebview: vscode.Webview | undefined;
   const playConfiguredNotificationSound = async (
-    webview: vscode.Webview,
+    webview: vscode.Webview | undefined = notificationWebview,
   ): Promise<void> => {
     const settings = readQcodeSettings();
     if (!settings.assistantSoundEnabled) return;
@@ -142,9 +144,15 @@ export function activate(context: vscode.ExtensionContext): void {
     const playedNatively = !vscode.env.remoteName &&
       await playNotificationSoundFile(resolveAssistantSoundPath(settings));
     if (!playedNatively) {
-      await webview.postMessage({ command: "playNotificationSoundFallback" });
+      await webview?.postMessage({ command: "playNotificationSoundFallback" });
     }
   };
+
+  context.subscriptions.push(watchSessionCompletionSounds(
+    terminalSessions.onDidChangeSession,
+    getWorkspaceCwd,
+    () => void playConfiguredNotificationSound(),
+  ));
 
   const queueInputText = (text: string) => {
     pendingInputText = pendingInputText ? `${pendingInputText}\n${text}` : text;
@@ -181,6 +189,10 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.window.registerWebviewViewProvider(viewType, {
       resolveWebviewView(view) {
+        notificationWebview = view.webview;
+        view.onDidDispose(() => {
+          if (notificationWebview === view.webview) notificationWebview = undefined;
+        });
         let currentRoute: Route = { name: "home" };
         let sessionWatcher: vscode.Disposable | undefined;
         let detailWebviewReady = false;
@@ -202,6 +214,11 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.Uri.file(resolveAssistantSoundPath(settings)),
           ).toString();
         };
+        const getNotificationSoundOptions = (settings: QcodeSettings) => ({
+          assistantSoundEnabled: settings.assistantSoundEnabled,
+          assistantSoundUri: getAssistantSoundWebviewUri(settings),
+          cspSource: view.webview.cspSource,
+        });
         const getMermaidScriptWebviewUri = (): string => {
           return view.webview.asWebviewUri(mermaidScriptUri).toString();
         };
@@ -217,7 +234,8 @@ export function activate(context: vscode.ExtensionContext): void {
         const showHome = () => {
           stopSessionWatcher();
           detailWebviewReady = false;
-          configureWebviewOptions();
+          const settings = readQcodeSettings();
+          configureWebviewOptions(settings);
           currentRoute = { name: "home" };
           const whatsNew = dismissedWhatsNewVersions.has(extensionVersion)
             ? undefined
@@ -229,6 +247,7 @@ export function activate(context: vscode.ExtensionContext): void {
             extensionVersion,
             whatsNew,
             workspaceCwd ? readSessionPins(workspaceCwd) : new Map(),
+            getNotificationSoundOptions(settings),
           );
         };
 
@@ -244,6 +263,7 @@ export function activate(context: vscode.ExtensionContext): void {
             getSettingsFilePath(),
             defaultAssistantSoundPath,
             getWhatsNewRelease(extensionVersion),
+            getNotificationSoundOptions(settings),
           );
         };
 
@@ -323,9 +343,6 @@ export function activate(context: vscode.ExtensionContext): void {
           if (!routeMatches) return;
 
           stopSessionWatcher();
-          if (bridgeSession.playCompletionSound === true) {
-            void playConfiguredNotificationSound(view.webview);
-          }
           const sessionFileChanged = Boolean(bridgeSession.sessionFile &&
             (!currentRoute.filePath || path.resolve(currentRoute.filePath) !== path.resolve(bridgeSession.sessionFile)));
           if (bridgeSession.sessionFile && sessionFileChanged) {
@@ -512,6 +529,7 @@ export function activate(context: vscode.ExtensionContext): void {
             await view.webview.postMessage({
               command: "settingsSaved",
               settings,
+              notificationSoundOptions: getNotificationSoundOptions(settings),
             });
           } catch (error) {
             await view.webview.postMessage({

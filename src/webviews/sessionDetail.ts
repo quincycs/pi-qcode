@@ -6,6 +6,7 @@ import {
 import type { ProviderOption } from "../qcodeSettings";
 import type { SessionDetail } from "../sessionFiles";
 import { escapeHtml } from "../utils";
+import { renderNotificationSoundScript } from "./notificationSound";
 import {
   messageRenderingScript,
   messageRenderingStyles,
@@ -452,68 +453,6 @@ ${messageRenderingStyles}
     };
 
     const assistantSoundEnabled = ${options.assistantSoundEnabled === true ? "true" : "false"};
-    const assistantSoundUri = ${toScriptString(options.assistantSoundUri ?? "")};
-    let notificationAudioContext = null;
-    let notificationAudioBufferPromise = null;
-    const getNotificationAudioContext = () => {
-      if (!assistantSoundEnabled || !assistantSoundUri) return null;
-      if (notificationAudioContext) return notificationAudioContext;
-      const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextConstructor) return null;
-      notificationAudioContext = new AudioContextConstructor();
-      return notificationAudioContext;
-    };
-    const loadNotificationAudioBuffer = () => {
-      const audioContext = getNotificationAudioContext();
-      if (!audioContext) return Promise.resolve(null);
-      if (notificationAudioBufferPromise) return notificationAudioBufferPromise;
-
-      notificationAudioBufferPromise = fetch(assistantSoundUri)
-        .then((response) => {
-          if (!response.ok) throw new Error('Unable to load notification sound.');
-          return response.arrayBuffer();
-        })
-        .then((arrayBuffer) => audioContext.decodeAudioData(arrayBuffer))
-        .catch(() => null);
-      return notificationAudioBufferPromise;
-    };
-    const unlockNotificationAudio = () => {
-      if (!assistantSoundEnabled) return;
-      const audioContext = getNotificationAudioContext();
-      if (!audioContext) return;
-      if (audioContext.state === 'suspended') {
-        audioContext.resume().catch(() => {});
-      }
-      loadNotificationAudioBuffer();
-    };
-    const playNotificationSoundInWebview = () => {
-      if (!assistantSoundEnabled) return;
-      const audioContext = getNotificationAudioContext();
-      if (!audioContext) return;
-
-      const play = (audioBuffer) => {
-        if (!audioBuffer) return;
-        try {
-          const source = audioContext.createBufferSource();
-          const gain = audioContext.createGain();
-          source.buffer = audioBuffer;
-          gain.gain.value = 0.8;
-          source.connect(gain);
-          gain.connect(audioContext.destination);
-          source.start();
-        } catch {
-          // Ignore audio failures; the message should still render normally.
-        }
-      };
-
-      const loadAndPlay = () => loadNotificationAudioBuffer().then(play).catch(() => {});
-      if (audioContext.state === 'suspended') {
-        audioContext.resume().then(loadAndPlay).catch(() => {});
-        return;
-      }
-
-      loadAndPlay();
-    };
     const playNotificationSound = () => {
       if (!assistantSoundEnabled) return;
       vscode.postMessage({ command: 'playNotificationSound' });
@@ -1003,9 +942,6 @@ ${messageRenderingScript}
       nonce: ${toScriptString(nonce)},
     });
     qcodeMessageRendering.installClickHandlers(vscode, { onReply: addReplyToInput });
-    ['pointerdown', 'keydown', 'touchstart'].forEach((eventName) => {
-      window.addEventListener(eventName, unlockNotificationAudio, { once: true, passive: true });
-    });
     qcodeMessageRendering.renderExistingMessages();
     renderComposerAttachments();
     syncThinkingElapsedTimer();
@@ -1135,11 +1071,6 @@ ${messageRenderingScript}
         return;
       }
 
-      if (data.command === 'playNotificationSoundFallback') {
-        playNotificationSoundInWebview();
-        return;
-      }
-
       if (data.command === 'sessionFileReady') {
         form.dataset.filePath = data.filePath || '';
         const shouldScroll = replaceMessages(
@@ -1221,6 +1152,7 @@ ${messageRenderingScript}
       input.focus();
     });
   </script>
+  ${renderNotificationSoundScript(nonce, options)}
 </body>
 </html>`;
 }

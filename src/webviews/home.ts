@@ -4,6 +4,7 @@ import { getSessionPinnedAt } from "../sessionPins";
 import { escapeHtml } from "../utils";
 import type { WhatsNewRelease } from "../whatsNew";
 import { renderWhatsNew, whatsNewStyles } from "./whatsNew";
+import { renderNotificationSoundScript, type NotificationSoundOptions } from "./notificationSound";
 
 export function renderHome(
   nonce: string,
@@ -11,6 +12,7 @@ export function renderHome(
   version: string,
   whatsNew?: WhatsNewRelease,
   pinnedSessions: ReadonlyMap<string, number> = new Map(),
+  soundOptions: NotificationSoundOptions = {},
 ): string {
   const sessions = getRecentSessions(workspaceCwd, [...pinnedSessions.keys()]);
   const groups = groupSessions(sessions, pinnedSessions);
@@ -19,7 +21,7 @@ export function renderHome(
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; form-action 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; connect-src ${soundOptions.cspSource || "'none'"}; media-src ${soundOptions.cspSource || "'none'"}; form-action 'none';">
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   body {
@@ -300,6 +302,7 @@ ${whatsNewStyles}
     window.addEventListener('blur', closeSessionContextMenu);
     document.querySelector('.list').addEventListener('scroll', closeSessionContextMenu);
   </script>
+  ${renderNotificationSoundScript(nonce, soundOptions)}
 </body>
 </html>`;
 }

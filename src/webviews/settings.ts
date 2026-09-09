@@ -2,6 +2,10 @@ import type { QcodeSettings } from "../qcodeSettings";
 import { escapeHtml } from "../utils";
 import type { WhatsNewRelease } from "../whatsNew";
 import { renderWhatsNew, whatsNewStyles } from "./whatsNew";
+import {
+  renderNotificationSoundScript,
+  type NotificationSoundOptions,
+} from "./notificationSound";
 
 export function renderSettings(
   nonce: string,
@@ -9,12 +13,13 @@ export function renderSettings(
   settingsFilePath: string,
   defaultAssistantSoundPath: string,
   whatsNew?: WhatsNewRelease,
+  soundOptions: NotificationSoundOptions = {},
 ): string {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; form-action 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; connect-src ${soundOptions.cspSource || "'none'"}; media-src ${soundOptions.cspSource || "'none'"}; form-action 'none';">
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   body {
@@ -755,6 +760,7 @@ ${whatsNewStyles}
     });
     renderAll();
   </script>
+  ${renderNotificationSoundScript(nonce, soundOptions)}
 </body>
 </html>`;
 }
