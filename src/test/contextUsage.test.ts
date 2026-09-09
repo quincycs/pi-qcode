@@ -1,5 +1,6 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
+import * as vm from "node:vm";
 import { readSessionContextUsageFromContent } from "../sessionFiles";
 import { renderSessionDetail } from "../webviews/sessionDetail";
 
@@ -28,15 +29,51 @@ test("preserves a known zero session cost", () => {
   assert.equal(readSessionContextUsageFromContent(content)?.sessionCost, 0);
 });
 
-test("renders persistent placeholders for context percentage and cost", () => {
+test("renders persistent placeholders for model, context percentage and cost", () => {
   const html = renderSessionDetail("", "nonce", {
     title: "New Session",
     messages: [],
   });
 
-  assert.match(html, />—%<\/span><span class="context-usage-value">\$—<\/span>/);
+  assert.match(html, /<span class="context-usage-model">—<\/span><span class="context-usage-value">—%<\/span><span class="context-usage-value">\$—<\/span>/);
   assert.match(html, /reportedPercent/);
   assert.match(html, /usage && usage\.percent/);
+});
+
+test("displays the session model and reasoning before usage and updates them with live changes", () => {
+  const html = renderSessionDetail("", "nonce", {
+    title: "Session",
+    messages: [],
+  });
+  const script = html.slice(
+    html.indexOf("const formatTokens ="),
+    html.indexOf("const hideTypeahead ="),
+  );
+  let children: { textContent: string; title?: string }[] = [];
+  const context = vm.createContext({
+    document: { createElement: () => ({}) },
+    contextUsage: {
+      replaceChildren: (...elements: typeof children) => { children = elements; },
+      setAttribute: () => {},
+    },
+  });
+  vm.runInContext(script, context);
+  vm.runInContext('updateContextUsage({ modelId: "model-one", percent: 25, sessionCost: 1.5 })', context);
+  assert.deepEqual(children.map((element) => element.textContent), ["model-one", "25.0%", "$1.50"]);
+  assert.equal(children[0].title, "model-one");
+
+  vm.runInContext('updateContextUsage({ modelId: "model-one", thinkingLevel: "high", percent: 25, sessionCost: 1.5 })', context);
+  assert.deepEqual(children.map((element) => element.textContent), ["model-one (high)", "25.0%", "$1.50"]);
+  assert.equal(children[0].title, "model-one (high)");
+
+  vm.runInContext('updateContextUsage({ modelId: "model-one", thinkingLevel: "off" })', context);
+  assert.equal(children[0].textContent, "model-one (off)");
+
+  vm.runInContext('updateContextUsage({ modelId: "model-two" })', context);
+  assert.deepEqual(children.map((element) => element.textContent), ["model-two", "—%", "$—"]);
+
+  vm.runInContext('updateContextUsage(undefined)', context);
+  assert.deepEqual(children.map((element) => element.textContent), ["—", "—%", "$—"]);
 });
 
 test("colors context usage by used-token thresholds", () => {

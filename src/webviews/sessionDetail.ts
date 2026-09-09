@@ -107,6 +107,11 @@ export function renderSessionDetail(
     font-size: 11px;
     white-space: nowrap;
   }
+  .context-usage-model {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .context-usage-value {
     flex: 0 0 auto;
   }
@@ -325,7 +330,7 @@ ${messageRenderingStyles}
   <main class="detail">
     <header class="header">
       <button type="button" class="home-button" id="home-button" aria-label="Home" title="Home">←</button>
-      <div class="context-usage" id="context-usage" aria-label="Context window usage and session cost" title="Context usage and session cost unavailable"><span class="context-usage-value">—%</span><span class="context-usage-value">$—</span></div>
+      <div class="context-usage" id="context-usage" aria-label="Session model, context window usage and session cost" title="Session model, context usage and session cost unavailable"><span class="context-usage-model">—</span><span class="context-usage-value">—%</span><span class="context-usage-value">$—</span></div>
       <button type="button" class="session-warning" id="session-warning" aria-label="Session warnings" title="Session warnings" hidden>⚠</button>
     </header>
     <section class="body">
@@ -747,13 +752,21 @@ ${messageRenderingScript}
       const hasPercent = rawPercent !== undefined && rawPercent >= 0;
       const cost = formatCost(usage && usage.sessionCost);
 
+      const modelElement = document.createElement('span');
+      modelElement.className = 'context-usage-model';
+      const modelLabel = (usage && usage.modelId || '—')
+        + (usage && usage.thinkingLevel ? ' (' + usage.thinkingLevel + ')' : '');
+      modelElement.textContent = modelLabel;
+      modelElement.title = usage && (usage.modelId || usage.thinkingLevel)
+        ? modelLabel
+        : 'Session model unavailable';
       const percentElement = document.createElement('span');
       percentElement.className = 'context-usage-value' + getContextUsageColorClass(used);
       percentElement.textContent = hasPercent ? rawPercent.toFixed(1) + '%' : '—%';
       const costElement = document.createElement('span');
       costElement.className = 'context-usage-value';
       costElement.textContent = cost || '$—';
-      contextUsage.replaceChildren(percentElement, costElement);
+      contextUsage.replaceChildren(modelElement, percentElement, costElement);
 
       const metadata = [];
       if (usage && usage.modelId) metadata.push(usage.modelId);
