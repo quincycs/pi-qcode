@@ -1,4 +1,4 @@
-import type { RecentSession } from "../sessionFiles";
+import type { HomeSession } from "../homeSessions";
 import { getRecentSessions } from "../sessionFiles";
 import { getSessionPinnedAt } from "../sessionPins";
 import { escapeHtml } from "../utils";
@@ -13,9 +13,8 @@ export function renderHome(
   whatsNew?: WhatsNewRelease,
   pinnedSessions: ReadonlyMap<string, number> = new Map(),
   soundOptions: NotificationSoundOptions = {},
+  sessions: HomeSession[] = getRecentSessions(workspaceCwd, [...pinnedSessions.keys()]),
 ): string {
-  const sessions = getRecentSessions(workspaceCwd, [...pinnedSessions.keys()]);
-  const groups = groupSessions(sessions, pinnedSessions);
 
   return `<!doctype html>
 <html lang="en">
@@ -149,6 +148,7 @@ export function renderHome(
     font-size: 10px;
     line-height: 1.35;
   }
+  .busy { color: var(--vscode-textLink-foreground, var(--vscode-focusBorder)); }
   .preview {
     margin: 6px 0 0;
     padding: 5px 7px;
@@ -213,7 +213,7 @@ ${whatsNewStyles}
       </div>
     </section>
     <section class="list">
-      ${renderGroups(groups, sessions.length)}
+      ${renderHomeSessionList(sessions, pinnedSessions)}
     </section>
   </main>
   <div class="context-menu" id="session-context-menu" role="menu" hidden>
@@ -268,18 +268,29 @@ ${whatsNewStyles}
       sessionPinAction.focus();
     };
 
-    document.querySelectorAll('[data-open-session]').forEach((session) => {
-      session.addEventListener('click', () => {
-        closeSessionContextMenu();
-        vscode.postMessage({
-          command: 'openSession',
-          filePath: session.dataset.filePath || '',
-        });
-      });
-      session.addEventListener('contextmenu', (event) => {
-        openSessionContextMenu(event, session);
+    const list = document.querySelector('.list');
+    list.addEventListener('click', (event) => {
+      const session = event.target.closest('[data-open-session]');
+      if (!session) return;
+      closeSessionContextMenu();
+      vscode.postMessage({
+        command: 'openSession',
+        filePath: session.dataset.filePath || '',
+        bridgeId: session.dataset.bridgeId || '',
       });
     });
+    list.addEventListener('contextmenu', (event) => {
+      const session = event.target.closest('[data-open-session]');
+      if (session && session.dataset.filePath) openSessionContextMenu(event, session);
+    });
+    window.addEventListener('message', (event) => {
+      if (event.data.command !== 'refreshHomeSessions') return;
+      closeSessionContextMenu();
+      const scrollTop = list.scrollTop;
+      list.innerHTML = event.data.html;
+      list.scrollTop = scrollTop;
+    });
+    vscode.postMessage({ command: 'homeReady' });
     sessionPinAction.addEventListener('click', () => {
       if (!contextSession) return;
       vscode.postMessage({
@@ -307,10 +318,17 @@ ${whatsNewStyles}
 </html>`;
 }
 
-export function groupSessions(
-  sessions: RecentSession[],
+export function renderHomeSessionList(
+  sessions: HomeSession[],
   pinnedSessions: ReadonlyMap<string, number> = new Map(),
-): Record<string, RecentSession[]> {
+): string {
+  return renderGroups(groupSessions(sessions, pinnedSessions), sessions.length);
+}
+
+export function groupSessions(
+  sessions: HomeSession[],
+  pinnedSessions: ReadonlyMap<string, number> = new Map(),
+): Record<string, HomeSession[]> {
   const orderedSessions = [...sessions].sort((a, b) => {
     const aPinnedAt = getSessionPinnedAt(pinnedSessions, a.filePath);
     const bPinnedAt = getSessionPinnedAt(pinnedSessions, b.filePath);
@@ -322,7 +340,7 @@ export function groupSessions(
     return b.lastActiveAt.getTime() - a.lastActiveAt.getTime();
   });
 
-  return orderedSessions.reduce<Record<string, RecentSession[]>>(
+  return orderedSessions.reduce<Record<string, HomeSession[]>>(
     (groups, session) => {
       const group = getSessionPinnedAt(pinnedSessions, session.filePath) !== undefined
         ? "Pinned"
@@ -336,7 +354,7 @@ export function groupSessions(
 }
 
 function renderGroups(
-  groups: Record<string, RecentSession[]>,
+  groups: Record<string, HomeSession[]>,
   total: number,
 ): string {
   if (!total) {
@@ -356,9 +374,11 @@ function renderGroups(
     .join("");
 }
 
-function renderSession(session: RecentSession, pinned: boolean): string {
+function renderSession(session: HomeSession, pinned: boolean): string {
+  const activity = session.busy
+    ? '<span class="busy">busy</span>'
+    : escapeHtml(timeSince(session.lastActiveAt));
   const meta = [
-    timeSince(session.lastActiveAt),
     `${session.messageCount} msg${session.messageCount === 1 ? "" : "s"}`,
     session.model !== "unknown" ? session.model : "",
   ]
@@ -366,11 +386,11 @@ function renderSession(session: RecentSession, pinned: boolean): string {
     .join(" - ");
 
   return `
-    <button type="button" class="session" title="${escapeHtml(session.fileName)}" data-open-session data-file-path="${escapeHtml(session.filePath)}" data-pinned="${pinned}">
+    <button type="button" class="session" title="${escapeHtml(session.fileName)}" data-open-session data-file-path="${escapeHtml(session.filePath)}" data-pinned="${pinned}" data-bridge-id="${escapeHtml(session.bridgeId || "")}">
       <div class="title-row">
         <div class="title">${escapeHtml(session.title)}</div>
       </div>
-      <div class="meta">${escapeHtml(meta)}</div>
+      <div class="meta">${activity} - ${escapeHtml(meta)}</div>
       <div class="preview">${escapeHtml(session.preview)}</div>
     </button>`;
 }

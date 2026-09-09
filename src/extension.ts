@@ -11,6 +11,7 @@ import {
   validateChatAttachmentList,
   type SessionDraft,
 } from "./chatAttachments";
+import { HomeSessions } from "./homeSessions";
 import { searchFileSuggestions } from "./fileSuggestions";
 import {
   fileReferenceExists,
@@ -31,6 +32,7 @@ import {
 } from "./qcodeSettings";
 import type { SessionDetail, SessionWarning } from "./sessionFiles";
 import {
+  getRecentSessions,
   getSessionFolderForCwd,
   isSessionFile,
   readSessionDetail,
@@ -42,7 +44,7 @@ import {
   setSessionPinned,
 } from "./sessionPins";
 import { delay, getNonce } from "./utils";
-import { renderHome } from "./webviews/home";
+import { renderHome, renderHomeSessionList } from "./webviews/home";
 import { renderSessionDetail } from "./webviews/sessionDetail";
 import { renderSettings } from "./webviews/settings";
 import { getWhatsNewRelease } from "./whatsNew";
@@ -57,7 +59,8 @@ type Route =
   | { name: "settings" };
 
 type WebviewMessage =
-  | { command: "openSession"; filePath?: string }
+  | { command: "openSession"; filePath?: string; bridgeId?: string }
+  | { command: "homeReady" }
   | { command: "setSessionPinned"; filePath?: string; pinned?: boolean }
   | { command: "newSession" }
   | { command: "dismissWhatsNew"; version?: string }
@@ -82,6 +85,10 @@ type WebviewMessage =
 
 export function activate(context: vscode.ExtensionContext): void {
   const terminalSessions = new PiTerminalSessions(context);
+  const homeSessions = new HomeSessions();
+  context.subscriptions.push(terminalSessions.onDidChangeSession((session) => {
+    homeSessions.update(session, getWorkspaceCwd() || "");
+  }));
   const extensionVersion = String(context.extension.packageJSON.version || "");
   let addToActiveQcodeInput: (() => void) | undefined;
   let pendingInputText = "";
@@ -196,6 +203,7 @@ export function activate(context: vscode.ExtensionContext): void {
         let currentRoute: Route = { name: "home" };
         let sessionWatcher: vscode.Disposable | undefined;
         let detailWebviewReady = false;
+        let homeRefreshTimer: NodeJS.Timeout | undefined;
         const shownBridgeActionErrors = new Set<string>();
         const dismissedWhatsNewVersions = new Set(
           readQcodeSettings().dismissedWhatsNewVersions,
@@ -231,6 +239,19 @@ export function activate(context: vscode.ExtensionContext): void {
           sessionWatcher = undefined;
         };
 
+        const getHomeSessions = (cwd: string | undefined, pins: ReadonlyMap<string, number>) =>
+          homeSessions.merge(getRecentSessions(cwd, [...pins.keys()]), cwd);
+
+        const refreshHomeSessions = () => {
+          if (currentRoute.name !== "home") return;
+          const cwd = getWorkspaceCwd();
+          const pins = cwd ? readSessionPins(cwd) : new Map<string, number>();
+          void view.webview.postMessage({
+            command: "refreshHomeSessions",
+            html: renderHomeSessionList(getHomeSessions(cwd, pins), pins),
+          });
+        };
+
         const showHome = () => {
           stopSessionWatcher();
           detailWebviewReady = false;
@@ -241,13 +262,15 @@ export function activate(context: vscode.ExtensionContext): void {
             ? undefined
             : getWhatsNewRelease(extensionVersion);
           const workspaceCwd = getWorkspaceCwd();
+          const pins = workspaceCwd ? readSessionPins(workspaceCwd) : new Map<string, number>();
           view.webview.html = renderHome(
             getNonce(),
             workspaceCwd,
             extensionVersion,
             whatsNew,
-            workspaceCwd ? readSessionPins(workspaceCwd) : new Map(),
+            pins,
             getNotificationSoundOptions(settings),
+            getHomeSessions(workspaceCwd, pins),
           );
         };
 
@@ -267,15 +290,18 @@ export function activate(context: vscode.ExtensionContext): void {
           );
         };
 
-        const showSessionDetail = (filePath: string) => {
+        const showSessionDetail = (filePath: string, bridgeId?: string) => {
           stopSessionWatcher();
           detailWebviewReady = false;
-          const bridgeSession = terminalSessions.getSessionByFile(filePath);
+          const bridgeSession = bridgeId
+            ? terminalSessions.getSession(bridgeId)
+            : terminalSessions.getSessionByFile(filePath);
+          filePath = bridgeSession?.sessionFile || filePath;
           const hasBridgeBaseline = Boolean(bridgeSession &&
             (bridgeSession.status === "connected" || bridgeSession.messages.length));
           const session = hasBridgeBaseline && bridgeSession
             ? {
-                title: bridgeSession.sessionName || path.basename(filePath),
+                title: bridgeSession.sessionName || path.basename(filePath) || "New Session",
                 filePath,
                 messages: bridgeSession.messages,
                 contextUsage: bridgeSession.contextUsage,
@@ -374,11 +400,22 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         };
 
-        const bridgeSessionSubscription = terminalSessions.onDidChangeSession(applyBridgeSession);
+        const bridgeSessionSubscription = terminalSessions.onDidChangeSession((session) => {
+          applyBridgeSession(session);
+          // Coalesce streaming events; refresh just the list, not the whole webview.
+          // Settlement events also re-read disk metadata after the run completes.
+          if (currentRoute.name === "home" && !homeRefreshTimer) {
+            homeRefreshTimer = setTimeout(() => {
+              homeRefreshTimer = undefined;
+              refreshHomeSessions();
+            }, 100);
+          }
+        });
 
         const handleSendMessage = async (
           message: Extract<WebviewMessage, { command: "sendMessage" }>,
         ) => {
+          const sendingRoute = currentRoute;
           try {
             const submittedAttachments = validateChatAttachmentList(
               message.attachments,
@@ -402,12 +439,12 @@ export function activate(context: vscode.ExtensionContext): void {
               rawPrompt,
               String(message.providerCliArgs || ""),
               String(message.clientMessageId || crypto.randomUUID()),
+              sendingRoute.name === "sessionDetail" ? sendingRoute.bridgeId : undefined,
             );
-            if (currentRoute.name === "sessionDetail") {
+            if (currentRoute === sendingRoute && currentRoute.name === "sessionDetail") {
               currentRoute = {
                 ...currentRoute,
                 bridgeId: result.bridgeId,
-                filePath: result.sessionFilePath || currentRoute.filePath,
               };
             }
             const bridgeSession = terminalSessions.getSession(result.bridgeId);
@@ -624,8 +661,10 @@ export function activate(context: vscode.ExtensionContext): void {
             deliverPendingInput();
           }
 
+          if (message.command === "homeReady") refreshHomeSessions();
+
           if (message.command === "openSession") {
-            showSessionDetail(String(message.filePath || ""));
+            showSessionDetail(String(message.filePath || ""), message.bridgeId);
           }
 
           if (message.command === "setSessionPinned") {
@@ -764,7 +803,9 @@ export function activate(context: vscode.ExtensionContext): void {
           if (!view.visible) return;
 
           if (currentRoute.name === "sessionDetail") {
-            if (currentRoute.filePath) showSessionDetail(currentRoute.filePath);
+            if (currentRoute.filePath || currentRoute.bridgeId) {
+              showSessionDetail(currentRoute.filePath || "", currentRoute.bridgeId);
+            }
           } else if (currentRoute.name === "settings") {
             showSettings();
           } else {
@@ -776,6 +817,7 @@ export function activate(context: vscode.ExtensionContext): void {
           dispose() {
             stopSessionWatcher();
             bridgeSessionSubscription.dispose();
+            if (homeRefreshTimer) clearTimeout(homeRefreshTimer);
             addToActiveQcodeInput = undefined;
           },
         });

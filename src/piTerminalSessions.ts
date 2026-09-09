@@ -95,6 +95,7 @@ export interface PiTerminalSessionView {
   bridgeId: string;
   status: BridgeConnectionStatus;
   statusMessage?: string;
+  busy?: boolean;
   sessionFile?: string;
   sessionId?: string;
   sessionName?: string;
@@ -151,13 +152,14 @@ export class PiTerminalSessions implements vscode.Disposable {
     text: string,
     providerCliArgs = "",
     clientMessageId: string = crypto.randomUUID(),
+    requestedBridgeId?: string,
   ): Promise<SendTerminalSessionResult> {
     if (!text) throw new Error("Message text cannot be empty.");
     if (filePath && !isSessionFile(filePath))
       throw new Error("Invalid Pi session file.");
 
     const resolvedFilePath = filePath ? path.resolve(filePath) : undefined;
-    const existing = resolvedFilePath
+    const existing = requestedBridgeId ? this.sessions.get(requestedBridgeId) : resolvedFilePath
       ? this.findBySessionFile(resolvedFilePath)
       : undefined;
     if (existing) {
@@ -191,6 +193,9 @@ export class PiTerminalSessions implements vscode.Disposable {
           bridgeId: existing.bridgeId,
           sessionFilePath: existing.state?.sessionFile,
         };
+      }
+      if (requestedBridgeId && !resolvedFilePath) {
+        throw new Error("The Pi session is still starting. Wait for its bridge to connect.");
       }
       if (
         !existing.terminalExited &&
@@ -592,6 +597,7 @@ export class PiTerminalSessions implements vscode.Disposable {
       return;
     }
     if (message.type === "agent_start") {
+      if (session.state) session.state.idle = false;
       removeThinking(session.visibleMessages);
       session.thinkingCounts = {};
       upsertThinking(session);
@@ -612,6 +618,7 @@ export class PiTerminalSessions implements vscode.Disposable {
       return;
     }
     if (message.type === "agent_settled") {
+      if (session.state) session.state.idle = true;
       session.userInputWaits.clear();
       finalizeAssistant(session);
       this.emit(session, undefined, true);
@@ -1045,6 +1052,10 @@ export class PiTerminalSessions implements vscode.Disposable {
     return {
       bridgeId: session.bridgeId,
       status: session.status,
+      busy: !session.terminalExited &&
+        (session.status === "connecting" || session.status === "connected") &&
+        (session.state?.idle === false || session.visibleMessages.some((message) =>
+          message.kind === "thinking" || message.deliveryState === "pending")),
       sessionFile:
         session.state?.sessionFile ||
         session.registration?.sessionFile ||
