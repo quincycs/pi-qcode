@@ -11,6 +11,11 @@ export interface WhatsNewRelease {
 // Update these items for each release. The version comes from package.json at runtime.
 const currentReleaseItems: WhatsNewItem[] = [
   {
+    title: "V0.1.8 - Env file support",
+    description:
+      "Support for .env file to be loaded into the pi terminal. Specify an env file on the provider option. Useful for skills that expect certain environment variables.",
+  },
+  {
     title: "V0.1.7 - Busy indicator",
     description:
       "'busy' is shown on working sessions. Notifications activate for any session of the window. Model is shown on session.",
