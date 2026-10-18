@@ -127,6 +127,12 @@ export function renderSettings(
     white-space: pre-wrap;
     word-break: break-word;
   }
+  #hash-options .option-subtitle {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+  }
   .edit-fields {
     display: flex;
     flex-direction: column;
