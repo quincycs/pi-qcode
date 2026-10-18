@@ -139,6 +139,7 @@ export function renderSettings(
     gap: 7px;
   }
   input,
+  select,
   textarea {
     width: 100%;
     min-width: 0;
@@ -155,6 +156,7 @@ export function renderSettings(
     resize: vertical;
   }
   input:focus,
+  select:focus,
   textarea:focus {
     outline: 1px solid var(--vscode-focusBorder, #007acc);
     outline-offset: -1px;
@@ -245,6 +247,15 @@ ${whatsNewStyles}
         </div>
       </section>
 
+      <section class="settings-section" aria-labelledby="environment-variables-title">
+        <h2 class="section-title" id="environment-variables-title">Environment Variables</h2>
+        <p class="description">Name a .env file, then select it in a provider. Variables are loaded when a new Pi terminal starts. Use an absolute path, ~/ path, or workspace-relative path.</p>
+        <div class="options" id="environment-variables"></div>
+        <div class="actions">
+          <button type="button" class="add-button" id="add-environment-button">Add environment variables</button>
+        </div>
+      </section>
+
       <section class="settings-section" aria-labelledby="command-options-title">
         <h2 class="section-title" id="command-options-title">Command Options</h2>
         <p class="description">Manage # autocomplete options. The command is what you type, and the value is inserted when selected.</p>
@@ -277,18 +288,21 @@ ${whatsNewStyles}
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const providerOptionsContainer = document.getElementById('provider-options');
+    const environmentVariablesContainer = document.getElementById('environment-variables');
     const hashOptionsContainer = document.getElementById('hash-options');
     const notificationOptionsContainer = document.getElementById('notification-options');
     const assistantSoundEnabledInput = document.getElementById('assistant-sound-enabled');
     const status = document.getElementById('status');
     let providerOptions = ${toScriptJson(settings.providerOptions)};
+    let environmentVariables = ${toScriptJson(settings.environmentVariables)};
+    let environmentDraft = { title: '', value: '' };
     let hashOptions = ${toScriptJson(settings.hashAutocompleteOptions)};
     let lastUsedProviderNickname = ${toScriptJson(settings.lastUsedProviderNickname)};
     let assistantSoundEnabled = ${settings.assistantSoundEnabled === true ? "true" : "false"};
     let assistantSoundPath = ${toScriptJson(settings.assistantSoundPath)};
     const defaultAssistantSoundPath = ${toScriptJson(defaultAssistantSoundPath)};
     let editing = null;
-    let providerDraft = { nickname: '', cliArgs: '' };
+    let providerDraft = { nickname: '', cliArgs: '', environmentVariables: '' };
     let hashDraft = { command: '', value: '' };
     let assistantSoundPathDraft = '';
 
@@ -297,7 +311,8 @@ ${whatsNewStyles}
       status.classList.toggle('error', isError);
     };
     const resetDrafts = () => {
-      providerDraft = { nickname: '', cliArgs: '' };
+      providerDraft = { nickname: '', cliArgs: '', environmentVariables: '' };
+      environmentDraft = { title: '', value: '' };
       hashDraft = { command: '', value: '' };
       assistantSoundPathDraft = '';
     };
@@ -313,6 +328,7 @@ ${whatsNewStyles}
         }
       }
 
+      if (editing.isNew && editing.kind === 'environment') environmentVariables.splice(editing.index, 1);
       editing = null;
       resetDrafts();
       return true;
@@ -320,6 +336,7 @@ ${whatsNewStyles}
     const collectProviderOptions = () => providerOptions.map((option) => ({
       nickname: String(option.nickname || '').trim(),
       cliArgs: String(option.cliArgs || '').trim(),
+      environmentVariables: String(option.environmentVariables || ''),
     })).filter((option) => option.nickname && option.cliArgs);
     const collectHashOptions = () => hashOptions.map((option) => ({
       command: String(option.command || '').trim(),
@@ -331,6 +348,7 @@ ${whatsNewStyles}
         command: 'saveSettings',
         settings: {
           providerOptions: collectProviderOptions(),
+          environmentVariables: environmentVariables.filter((option) => option.title && option.value),
           hashAutocompleteOptions: collectHashOptions(),
           lastUsedProviderNickname,
           assistantSoundEnabled,
@@ -339,6 +357,10 @@ ${whatsNewStyles}
       });
     };
     const focusFirstEditInput = (kind) => {
+      if (kind === 'environment') {
+        environmentVariablesContainer.querySelector('[data-environment-title-input]')?.focus();
+        return;
+      }
       const container = kind === 'provider'
         ? providerOptionsContainer
         : kind === 'hash'
@@ -358,9 +380,18 @@ ${whatsNewStyles}
       providerDraft = {
         nickname: String(providerOptions[index]?.nickname || ''),
         cliArgs: String(providerOptions[index]?.cliArgs || ''),
+        environmentVariables: String(providerOptions[index]?.environmentVariables || ''),
       };
       renderAll();
       focusFirstEditInput('provider');
+    };
+    const beginEnvironmentEdit = (index, isNew = false) => {
+      if (editing && (editing.kind !== 'environment' || editing.index !== index) && !discardPendingEdit()) return;
+      if (isNew) index = environmentVariables.length - 1;
+      editing = { kind: 'environment', index, isNew };
+      environmentDraft = { ...environmentVariables[index] };
+      renderAll();
+      focusFirstEditInput('environment');
     };
     const beginHashEdit = (index, isNew = false) => {
       if (editing && (editing.kind !== 'hash' || editing.index !== index) && !discardPendingEdit()) return;
@@ -388,6 +419,7 @@ ${whatsNewStyles}
           hashOptions.splice(editing.index, 1);
         }
       }
+      if (editing?.isNew && editing.kind === 'environment') environmentVariables.splice(editing.index, 1);
       editing = null;
       resetDrafts();
       renderAll();
@@ -404,7 +436,25 @@ ${whatsNewStyles}
           return;
         }
 
-        providerOptions[editing.index] = { nickname, cliArgs };
+        providerOptions[editing.index] = { nickname, cliArgs, environmentVariables: providerDraft.environmentVariables };
+      } else if (editing.kind === 'environment') {
+        const title = environmentDraft.title.trim();
+        const value = environmentDraft.value.trim();
+        if (!title || !value) {
+          setStatus('Title and .env file path are required.', true);
+          return;
+        }
+        if (environmentVariables.some((option, index) => index !== editing.index && option.title === title)) {
+          setStatus('Environment variables titles must be unique.', true);
+          return;
+        }
+        const previousTitle = environmentVariables[editing.index].title;
+        if (previousTitle && previousTitle !== title) {
+          providerOptions.forEach((option) => {
+            if (option.environmentVariables === previousTitle) option.environmentVariables = title;
+          });
+        }
+        environmentVariables[editing.index] = { title, value };
       } else if (editing.kind === 'hash') {
         const command = String(hashDraft.command || '').trim();
         const value = String(hashDraft.value || '');
@@ -426,6 +476,23 @@ ${whatsNewStyles}
         index,
         label: providerOptions[index]?.nickname || 'this provider',
       });
+    };
+    const requestDeleteEnvironmentOption = (index) => {
+      vscode.postMessage({
+        command: 'confirmDeleteEnvironmentOption',
+        index,
+        label: environmentVariables[index]?.title || 'this environment variables file',
+      });
+    };
+    const deleteEnvironmentOption = (index) => {
+      const title = environmentVariables[index]?.title;
+      if (title) providerOptions.forEach((option) => {
+        if (option.environmentVariables === title) delete option.environmentVariables;
+      });
+      environmentVariables.splice(index, 1);
+      editing = null;
+      resetDrafts();
+      persistSettings();
     };
     const requestDeleteHashOption = (index) => {
       vscode.postMessage({
@@ -531,10 +598,67 @@ ${whatsNewStyles}
         setStatus('Unsaved changes');
       });
 
-      fields.append(nickname, cliArgs);
+      const environmentLabel = document.createElement('label');
+      environmentLabel.textContent = 'Environment variables file';
+      environmentLabel.htmlFor = 'provider-environment-select';
+      const environment = document.createElement('select');
+      environment.id = 'provider-environment-select';
+      environment.ariaLabel = 'Environment variables file';
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = 'None';
+      environment.append(none);
+      environmentVariables.filter((option) => option.title && option.value).forEach((option) => {
+        const item = document.createElement('option');
+        item.value = option.title;
+        item.textContent = option.title;
+        environment.append(item);
+      });
+      if (providerDraft.environmentVariables && !environmentVariables.some((option) => option.title === providerDraft.environmentVariables)) {
+        const missing = document.createElement('option');
+        missing.value = providerDraft.environmentVariables;
+        missing.textContent = providerDraft.environmentVariables + ' (missing)';
+        environment.append(missing);
+      }
+      environment.value = providerDraft.environmentVariables;
+      environment.addEventListener('change', () => {
+        providerDraft.environmentVariables = environment.value;
+        setStatus('Unsaved changes');
+      });
+
+      fields.append(nickname, cliArgs, environmentLabel, environment);
       row.append(fields);
       appendEditActions(row, () => requestDeleteProviderOption(index));
       providerOptionsContainer.append(row);
+    };
+    const renderEnvironmentEditRow = (index) => {
+      const row = document.createElement('div');
+      row.className = 'option-card option-edit';
+      const fields = document.createElement('div');
+      fields.className = 'edit-fields';
+      const title = document.createElement('input');
+      title.type = 'text';
+      title.placeholder = 'Title';
+      title.ariaLabel = 'Environment variables title';
+      title.dataset.environmentTitleInput = 'true';
+      title.value = environmentDraft.title;
+      title.addEventListener('input', () => {
+        environmentDraft.title = title.value;
+        setStatus('Unsaved changes');
+      });
+      const value = document.createElement('input');
+      value.type = 'text';
+      value.placeholder = '/path/to/.env';
+      value.ariaLabel = 'Environment variables .env file path';
+      value.value = environmentDraft.value;
+      value.addEventListener('input', () => {
+        environmentDraft.value = value.value;
+        setStatus('Unsaved changes');
+      });
+      fields.append(title, value);
+      row.append(fields);
+      appendEditActions(row, () => requestDeleteEnvironmentOption(index));
+      environmentVariablesContainer.append(row);
     };
     const renderHashEditRow = (index) => {
       const row = document.createElement('div');
@@ -619,10 +743,28 @@ ${whatsNewStyles}
           renderDisplayRow(
             providerOptionsContainer,
             nickname,
-            option.cliArgs || '',
+            (option.cliArgs || '') + (option.environmentVariables ? String.fromCharCode(10) + 'Environment: ' + option.environmentVariables : ''),
             'Edit ' + nickname,
             () => beginProviderEdit(index),
           );
+        }
+      });
+    };
+    const renderEnvironmentVariables = () => {
+      environmentVariablesContainer.replaceChildren();
+      if (!environmentVariables.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No environment variables files configured.';
+        environmentVariablesContainer.append(empty);
+        return;
+      }
+      environmentVariables.forEach((option, index) => {
+        if (editing?.kind === 'environment' && editing.index === index) {
+          renderEnvironmentEditRow(index);
+        } else {
+          renderDisplayRow(environmentVariablesContainer, option.title, option.value,
+            'Edit ' + option.title, () => beginEnvironmentEdit(index));
         }
       });
     };
@@ -672,6 +814,7 @@ ${whatsNewStyles}
     const renderAll = () => {
       renderNotificationOptions();
       renderProviderOptions();
+      renderEnvironmentVariables();
       renderHashOptions();
     };
 
@@ -719,6 +862,12 @@ ${whatsNewStyles}
       beginProviderEdit(providerOptions.length - 1, true);
       setStatus('Unsaved changes');
     });
+    document.getElementById('add-environment-button').addEventListener('click', () => {
+      if (!discardPendingEdit()) return;
+      environmentVariables.push({ title: '', value: '' });
+      beginEnvironmentEdit(environmentVariables.length - 1, true);
+      setStatus('Unsaved changes');
+    });
     document.getElementById('add-hash-button').addEventListener('click', () => {
       if (!discardPendingEdit()) return;
       hashOptions.push({ command: '#', value: '' });
@@ -732,6 +881,9 @@ ${whatsNewStyles}
       if (data.command === 'settingsSaved') {
         providerOptions = Array.isArray(data.settings && data.settings.providerOptions)
           ? data.settings.providerOptions
+          : [];
+        environmentVariables = Array.isArray(data.settings && data.settings.environmentVariables)
+          ? data.settings.environmentVariables
           : [];
         hashOptions = Array.isArray(data.settings && data.settings.hashAutocompleteOptions)
           ? data.settings.hashAutocompleteOptions
@@ -757,6 +909,11 @@ ${whatsNewStyles}
 
       if (data.command === 'deleteProviderOptionConfirmed') {
         deleteProviderOption(Number(data.index));
+        return;
+      }
+
+      if (data.command === 'deleteEnvironmentOptionConfirmed') {
+        deleteEnvironmentOption(Number(data.index));
         return;
       }
 

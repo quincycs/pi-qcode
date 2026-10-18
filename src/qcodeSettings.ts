@@ -10,6 +10,12 @@ export interface HashAutocompleteOption {
 export interface ProviderOption {
   nickname: string;
   cliArgs: string;
+  environmentVariables?: string;
+}
+
+export interface EnvironmentVariablesOption {
+  title: string;
+  value: string;
 }
 
 export interface PinnedSessionSetting {
@@ -25,6 +31,7 @@ export interface FolderSetting {
 export interface QcodeSettings {
   hashAutocompleteOptions: HashAutocompleteOption[];
   providerOptions: ProviderOption[];
+  environmentVariables: EnvironmentVariablesOption[];
   lastUsedProviderNickname: string;
   assistantSoundEnabled: boolean;
   assistantSoundPath: string;
@@ -50,6 +57,7 @@ export function readQcodeSettings(filePath = settingsFilePath): QcodeSettings {
     return {
       hashAutocompleteOptions: [],
       providerOptions: [],
+      environmentVariables: [],
       lastUsedProviderNickname: "",
       assistantSoundEnabled: false,
       assistantSoundPath: "",
@@ -127,6 +135,10 @@ function normalizeSettings(value: unknown): QcodeSettings {
     ? record.providerOptions.flatMap(normalizeProviderOption)
     : [];
 
+  const environmentVariables = Array.isArray(record.environmentVariables)
+    ? record.environmentVariables.flatMap(normalizeEnvironmentVariablesOption)
+    : [];
+
   const lastUsedProviderNickname = typeof record.lastUsedProviderNickname === "string"
     ? record.lastUsedProviderNickname.trim()
     : "";
@@ -157,6 +169,7 @@ function normalizeSettings(value: unknown): QcodeSettings {
   return {
     hashAutocompleteOptions,
     providerOptions,
+    environmentVariables,
     lastUsedProviderNickname,
     assistantSoundEnabled,
     assistantSoundPath,
@@ -216,5 +229,17 @@ function normalizeProviderOption(item: unknown): ProviderOption[] {
   const cliArgs = typeof record.cliArgs === "string" ? record.cliArgs.trim() : "";
   if (!nickname || !cliArgs) return [];
 
-  return [{ nickname, cliArgs }];
+  const environmentVariables = typeof record.environmentVariables === "string"
+    ? record.environmentVariables.trim()
+    : "";
+  return [{ nickname, cliArgs, ...(environmentVariables ? { environmentVariables } : {}) }];
+}
+
+function normalizeEnvironmentVariablesOption(item: unknown): EnvironmentVariablesOption[] {
+  if (!item || typeof item !== "object") return [];
+
+  const record = item as Record<string, unknown>;
+  const title = typeof record.title === "string" ? record.title.trim() : "";
+  const value = typeof record.value === "string" ? record.value.trim() : "";
+  return title && value ? [{ title, value }] : [];
 }

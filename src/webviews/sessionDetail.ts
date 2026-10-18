@@ -933,15 +933,17 @@ ${messageRenderingScript}
       const codeFence = String.fromCharCode(96).repeat(3);
       addToInput('RE:' + lineBreak + codeFence + lineBreak + text + lineBreak + codeFence + lineBreak);
     };
+    let selectedDraftProvider;
     const getSelectedProviderOption = () => {
       if (form.dataset.filePath) return undefined;
 
       const select = document.getElementById('draft-provider-select');
-      if (!select) return undefined;
+      if (!select) return selectedDraftProvider;
+      if (select.value === '') return selectedDraftProvider = undefined;
 
       const index = Number(select.value);
       if (!Number.isInteger(index) || index < 0 || index >= providerOptions.length) return undefined;
-      return providerOptions[index];
+      return selectedDraftProvider = providerOptions[index];
     };
     const getSelectedProviderCliArgs = () => {
       return String(getSelectedProviderOption()?.cliArgs || '');
@@ -980,7 +982,7 @@ ${messageRenderingScript}
     document.getElementById('draft-provider-select')?.addEventListener('change', (event) => {
       const target = event.target;
       const index = Number(target && target.value);
-      const nickname = Number.isInteger(index) && index >= 0 && index < providerOptions.length
+      const nickname = target?.value !== '' && Number.isInteger(index) && index >= 0 && index < providerOptions.length
         ? String(providerOptions[index]?.nickname || '')
         : '';
       vscode.postMessage({ command: 'saveLastUsedProvider', nickname });
@@ -1140,6 +1142,7 @@ ${messageRenderingScript}
         text: sentText,
         attachments: readyAttachments,
         providerCliArgs,
+        providerNickname: form.dataset.filePath ? undefined : String(getSelectedProviderOption()?.nickname || ''),
         clientMessageId,
       });
       removeDraftProviderOptions();

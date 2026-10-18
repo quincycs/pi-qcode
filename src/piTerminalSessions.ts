@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { readQcodeSettings } from "./qcodeSettings";
+import { readEnvironmentVariables } from "./environmentVariables";
 import {
   JsonLineDecoder,
   PI_BRIDGE_PROTOCOL_VERSION,
@@ -44,6 +46,11 @@ import {
   type SessionMessage,
 } from "./sessionFiles";
 
+function sessionProviderKey(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  return `qcode.sessionProvider:${process.platform === "win32" ? resolved.toLowerCase() : resolved}`;
+}
+
 const COMMAND_TIMEOUT_MS = 10_000;
 const REGISTRATION_SCAN_INTERVAL_MS = 1_000;
 const BRIDGE_STARTUP_TIMEOUT_MS = 15_000;
@@ -72,6 +79,7 @@ interface ManagedSession {
   terminal?: vscode.Terminal;
   terminalExited: boolean;
   requestedSessionFile?: string;
+  providerNickname?: string;
   registration?: BridgeRegistration;
   socket?: net.Socket;
   connecting: boolean;
@@ -153,6 +161,7 @@ export class PiTerminalSessions implements vscode.Disposable {
     providerCliArgs = "",
     clientMessageId: string = crypto.randomUUID(),
     requestedBridgeId?: string,
+    providerNickname?: string,
   ): Promise<SendTerminalSessionResult> {
     if (!text) throw new Error("Message text cannot be empty.");
     if (filePath && !isSessionFile(filePath))
@@ -218,6 +227,19 @@ export class PiTerminalSessions implements vscode.Disposable {
     const cwd = getWorkspaceCwd();
     if (!cwd)
       throw new Error("Unable to start session: no workspace folder is open.");
+    const selectedProviderNickname = providerNickname ?? (resolvedFilePath
+      ? this.context.workspaceState.get<string>(sessionProviderKey(resolvedFilePath), "")
+      : "");
+    const settings = readQcodeSettings();
+    const provider = settings.providerOptions.find((option) =>
+      option.nickname === selectedProviderNickname &&
+      (!providerCliArgs || option.cliArgs === providerCliArgs));
+    if (selectedProviderNickname && !provider) {
+      throw new Error(`Provider "${selectedProviderNickname}" was not found. Check Provider Options in Settings.`);
+    }
+    const providerEnvironment = readEnvironmentVariables(
+      settings, provider?.environmentVariables || "", cwd,
+    );
     const bridgeId = crypto.randomUUID();
     const token = crypto.randomBytes(32).toString("hex");
     const registrationPath = path.join(
@@ -226,12 +248,14 @@ export class PiTerminalSessions implements vscode.Disposable {
     );
     const providerArgs = splitCliArgs(providerCliArgs);
     const env: Record<string, string | null> = {
+      ...providerEnvironment,
+      // Bridge credentials always take precedence over user-provided variables.
       QCODE_BRIDGE_ID: bridgeId,
       QCODE_BRIDGE_TOKEN: token,
       QCODE_BRIDGE_REGISTRATION: registrationPath,
       QCODE_INITIAL_CLIENT_MESSAGE_ID: clientMessageId,
     };
-    if (usesOpenAiCodexModelProvider(providerArgs))
+    if (usesOpenAiCodexModelProvider(providerArgs) && env.PI_CACHE_RETENTION === undefined)
       env.PI_CACHE_RETENTION = "long";
 
     const terminalShell = resolveTerminalShell(vscode.env.shell);
@@ -262,6 +286,7 @@ export class PiTerminalSessions implements vscode.Disposable {
       terminal,
       terminalExited: false,
       requestedSessionFile: resolvedFilePath,
+      providerNickname: selectedProviderNickname,
       connecting: false,
       authenticated: false,
       status: "connecting",
@@ -1038,8 +1063,18 @@ export class PiTerminalSessions implements vscode.Disposable {
     playCompletionSound = false,
     actionError?: string,
   ): void {
+    const view = this.toView(session);
+    if (view.sessionFile && session.providerNickname !== undefined) {
+      const key = sessionProviderKey(view.sessionFile);
+      if (this.context.workspaceState.get<string>(key) !== session.providerNickname) {
+        void this.context.workspaceState.update(key, session.providerNickname).then(
+          undefined,
+          () => console.error("Unable to save the session's provider selection."),
+        );
+      }
+    }
     this.emitter.fire({
-      ...this.toView(session),
+      ...view,
       statusMessage,
       playCompletionSound,
       actionError,

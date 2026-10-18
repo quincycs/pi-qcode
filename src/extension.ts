@@ -70,10 +70,11 @@ type WebviewMessage =
   | { command: "saveSettings"; settings?: unknown }
   | { command: "confirmDeleteHashOption"; index?: number; label?: string }
   | { command: "confirmDeleteProviderOption"; index?: number; label?: string }
+  | { command: "confirmDeleteEnvironmentOption"; index?: number; label?: string }
   | { command: "saveLastUsedProvider"; nickname?: string }
   | { command: "showSessionWarnings"; warnings?: unknown }
   | { command: "playNotificationSound" }
-  | { command: "sendMessage"; filePath?: string; text?: string; attachments?: unknown; providerCliArgs?: string; clientMessageId?: string }
+  | { command: "sendMessage"; filePath?: string; text?: string; attachments?: unknown; providerCliArgs?: string; providerNickname?: string; clientMessageId?: string }
   | { command: "savePastedAttachment"; requestId?: string; name?: unknown; mimeType?: unknown; size?: unknown; data?: unknown }
   | { command: "removePastedAttachment"; attachment?: unknown }
   | { command: "copyToClipboard"; text?: string }
@@ -440,6 +441,7 @@ export function activate(context: vscode.ExtensionContext): void {
               String(message.providerCliArgs || ""),
               String(message.clientMessageId || crypto.randomUUID()),
               sendingRoute.name === "sessionDetail" ? sendingRoute.bridgeId : undefined,
+              typeof message.providerNickname === "string" ? message.providerNickname : undefined,
             );
             if (currentRoute === sendingRoute && currentRoute.name === "sessionDetail") {
               currentRoute = {
@@ -607,6 +609,7 @@ export function activate(context: vscode.ExtensionContext): void {
             WebviewMessage,
             | { command: "confirmDeleteHashOption" }
             | { command: "confirmDeleteProviderOption" }
+            | { command: "confirmDeleteEnvironmentOption" }
           >,
         ) => {
           const label = String(message.label || "this option");
@@ -620,7 +623,9 @@ export function activate(context: vscode.ExtensionContext): void {
           await view.webview.postMessage({
             command: message.command === "confirmDeleteProviderOption"
               ? "deleteProviderOptionConfirmed"
-              : "deleteHashOptionConfirmed",
+              : message.command === "confirmDeleteEnvironmentOption"
+                ? "deleteEnvironmentOptionConfirmed"
+                : "deleteHashOptionConfirmed",
             index: Number(message.index),
           });
         };
@@ -793,7 +798,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (
             message.command === "confirmDeleteHashOption" ||
-            message.command === "confirmDeleteProviderOption"
+            message.command === "confirmDeleteProviderOption" ||
+            message.command === "confirmDeleteEnvironmentOption"
           ) {
             void confirmDeleteOption(message);
           }

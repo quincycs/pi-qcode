@@ -6,6 +6,7 @@ import { renderSettings } from "../webviews/settings";
 const settings: QcodeSettings = {
   hashAutocompleteOptions: [],
   providerOptions: [],
+  environmentVariables: [],
   lastUsedProviderNickname: "",
   assistantSoundEnabled: false,
   assistantSoundPath: "",
