@@ -24,6 +24,9 @@ https://github.com/user-attachments/assets/d4b264ce-1b24-4532-8c6b-93db5f4052b9
 - Pin sessions to keep it at the top of the session list.
 - Using /tree in terminal impacts the qcode UI immediately.
 - Paste in a screenshot or binary file reference.
+- Provider Options configure the full Pi CLI command options when Pi is launched. This sets models, skills, extensions etc.
+- Environment variables can be read from Pi environment such as skills and extensions.
+- Slack Share gives broader team visibility of Qcode session messages. It's a one-way integration from Qcode to Slack, not remote control. See the [Qcode Slack sign-in helper](https://github.com/quincycs/pi-qcode/tree/main/slack-signin/README.md) for setup instructions.
 
 ## Prerequisites
 

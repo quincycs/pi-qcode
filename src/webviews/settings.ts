@@ -197,13 +197,6 @@ export function renderSettings(
     font-size: 11px;
     font-weight: 700;
   }
-  .setting-field-description {
-    margin: 6px 0 0;
-    color: var(--vscode-descriptionForeground);
-    font-size: 10px;
-    line-height: 1.4;
-    word-break: break-all;
-  }
   .row-actions,
   .actions { display: flex; gap: 8px; }
   .row-actions { margin-top: 8px; flex-wrap: wrap; }
@@ -265,6 +258,16 @@ ${whatsNewStyles}
         </div>
       </section>
 
+      <section class="settings-section" aria-labelledby="slack-share-title">
+        <h2 class="section-title" id="slack-share-title">Slack Share</h2>
+        <p class="description">Shares new sessions and attachments directly to Slack. Tokens are stored as plain text in the settings JSON.</p>
+        <label class="setting-toggle" for="slack-share-enabled">
+          <input type="checkbox" id="slack-share-enabled">
+          <span class="setting-toggle-label">Enable Slack Share</span>
+        </label>
+        <div class="options" id="slack-share-options"></div>
+      </section>
+
       <section class="settings-section" aria-labelledby="notification-options-title">
         <h2 class="section-title" id="notification-options-title">Notifications</h2>
         <label class="setting-toggle" for="assistant-sound-enabled">
@@ -293,6 +296,15 @@ ${whatsNewStyles}
     const notificationOptionsContainer = document.getElementById('notification-options');
     const assistantSoundEnabledInput = document.getElementById('assistant-sound-enabled');
     const status = document.getElementById('status');
+    const slackShareContainer = document.getElementById('slack-share-options');
+    const slackShareEnabledInput = document.getElementById('slack-share-enabled');
+    const slackShareFields = [
+      { key: 'userToken', label: 'SLACK_USER_TOKEN', type: 'password' },
+      { key: 'botToken', label: 'SLACK_BOT_TOKEN', type: 'password' },
+      { key: 'channelId', label: 'SLACK_CHANNEL_ID', type: 'text' },
+    ];
+    let slackShare = ${toScriptJson(settings.slackShare)};
+    let slackDraft = '';
     let providerOptions = ${toScriptJson(settings.providerOptions)};
     let environmentVariables = ${toScriptJson(settings.environmentVariables)};
     let environmentDraft = { title: '', value: '' };
@@ -315,6 +327,7 @@ ${whatsNewStyles}
       environmentDraft = { title: '', value: '' };
       hashDraft = { command: '', value: '' };
       assistantSoundPathDraft = '';
+      slackDraft = '';
     };
     const discardPendingEdit = () => {
       if (!editing) return true;
@@ -342,11 +355,12 @@ ${whatsNewStyles}
       command: String(option.command || '').trim(),
       value: String(option.value || ''),
     })).filter((option) => option.command && option.value);
-    const persistSettings = () => {
+    const persistSettings = (savedSlackShare = slackShare) => {
       setStatus('Saving...');
       vscode.postMessage({
         command: 'saveSettings',
         settings: {
+          slackShare: savedSlackShare,
           providerOptions: collectProviderOptions(),
           environmentVariables: environmentVariables.filter((option) => option.title && option.value),
           hashAutocompleteOptions: collectHashOptions(),
@@ -357,6 +371,10 @@ ${whatsNewStyles}
       });
     };
     const focusFirstEditInput = (kind) => {
+      if (kind === 'slackShare') {
+        slackShareContainer.querySelector('[data-slack-share-input]')?.focus();
+        return;
+      }
       if (kind === 'environment') {
         environmentVariablesContainer.querySelector('[data-environment-title-input]')?.focus();
         return;
@@ -404,6 +422,13 @@ ${whatsNewStyles}
       renderAll();
       focusFirstEditInput('hash');
     };
+    const beginSlackShareEdit = (field) => {
+      if (editing && (editing.kind !== 'slackShare' || editing.field !== field) && !discardPendingEdit()) return;
+      editing = { kind: 'slackShare', field, index: -1, isNew: false };
+      slackDraft = slackShare[field];
+      renderAll();
+      focusFirstEditInput('slackShare');
+    };
     const beginAssistantSoundPathEdit = () => {
       if (editing && editing.kind !== 'assistantSoundPath' && !discardPendingEdit()) return;
       editing = { kind: 'assistantSoundPath', index: -1, isNew: false };
@@ -427,6 +452,13 @@ ${whatsNewStyles}
     };
     const saveEdit = () => {
       if (!editing) return;
+
+      if (editing.kind === 'slackShare') {
+        const value = String(slackDraft || '').trim();
+        // Keep the saved display state unchanged until the extension confirms the write.
+        persistSettings({ ...slackShare, [editing.field]: value });
+        return;
+      }
 
       if (editing.kind === 'provider') {
         const nickname = String(providerDraft.nickname || '').trim();
@@ -793,6 +825,42 @@ ${whatsNewStyles}
         }
       });
     };
+    const renderSlackShareOptions = () => {
+      slackShareEnabledInput.checked = slackShare.enabled;
+      slackShareContainer.replaceChildren();
+      for (const field of slackShareFields) {
+        if (editing?.kind !== 'slackShare' || editing.field !== field.key) {
+          const value = slackShare[field.key];
+          const display = !value ? 'Not set' : field.type === 'password' ? '••••••••' : value;
+          renderDisplayRow(slackShareContainer, field.label, display,
+            'Edit ' + field.label, () => beginSlackShareEdit(field.key));
+          continue;
+        }
+
+        const row = document.createElement('div');
+        row.className = 'option-card option-edit';
+        const label = document.createElement('label');
+        label.className = 'edit-fields';
+        const title = document.createElement('span');
+        title.className = 'setting-toggle-label';
+        title.textContent = field.label;
+        const input = document.createElement('input');
+        input.type = field.type;
+        input.ariaLabel = field.label;
+        input.dataset.slackShareInput = 'true';
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+        input.value = slackDraft;
+        input.addEventListener('input', () => {
+          slackDraft = input.value;
+          setStatus('Unsaved changes');
+        });
+        label.append(title, input);
+        row.append(label);
+        appendEditActions(row);
+        slackShareContainer.append(row);
+      }
+    };
     const renderNotificationOptions = () => {
       assistantSoundEnabledInput.checked = assistantSoundEnabled;
       notificationOptionsContainer.replaceChildren();
@@ -816,6 +884,7 @@ ${whatsNewStyles}
       renderProviderOptions();
       renderEnvironmentVariables();
       renderHashOptions();
+      renderSlackShareOptions();
     };
 
     document.getElementById('home-button').addEventListener('click', () => {
@@ -846,6 +915,17 @@ ${whatsNewStyles}
       });
     }
 
+    slackShareEnabledInput.addEventListener('change', () => {
+      const nextEnabled = Boolean(slackShareEnabledInput.checked);
+      if (editing && !discardPendingEdit()) {
+        slackShareEnabledInput.checked = slackShare.enabled;
+        return;
+      }
+
+      renderAll();
+      slackShareEnabledInput.checked = nextEnabled;
+      persistSettings({ ...slackShare, enabled: nextEnabled });
+    });
     assistantSoundEnabledInput.addEventListener('change', () => {
       const nextAssistantSoundEnabled = Boolean(assistantSoundEnabledInput.checked);
       if (editing && !discardPendingEdit()) {
@@ -879,6 +959,7 @@ ${whatsNewStyles}
       if (!data) return;
 
       if (data.command === 'settingsSaved') {
+        slackShare = data.settings?.slackShare || slackShare;
         providerOptions = Array.isArray(data.settings && data.settings.providerOptions)
           ? data.settings.providerOptions
           : [];
@@ -903,6 +984,7 @@ ${whatsNewStyles}
       }
 
       if (data.command === 'settingsSaveError') {
+        slackShareEnabledInput.checked = slackShare.enabled;
         setStatus(data.error || 'Unable to save settings', true);
         return;
       }

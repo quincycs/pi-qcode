@@ -22,6 +22,7 @@ export function renderSessionDetail(
     initialInput?: string;
     initialAttachments?: ChatAttachment[];
     providerOptions?: ProviderOption[];
+    slackShareEnabled?: boolean;
     lastUsedProviderNickname?: string;
     assistantSoundEnabled?: boolean;
     assistantSoundUri?: string;
@@ -202,6 +203,13 @@ ${messageRenderingStyles}
     border: 1px solid var(--vscode-widget-border, transparent);
     border-radius: 5px;
   }
+  .draft-slack-share {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    cursor: pointer;
+  }
   .draft-provider-label {
     display: block;
     margin-bottom: 6px;
@@ -339,6 +347,7 @@ ${messageRenderingStyles}
         providerOptions,
         isDraftSession,
         lastUsedProviderNickname,
+        options.slackShareEnabled === true,
       )}
     </section>
     <form class="footer" id="message-form" data-file-path="${escapeHtml(filePath)}">
@@ -948,6 +957,12 @@ ${messageRenderingScript}
     const getSelectedProviderCliArgs = () => {
       return String(getSelectedProviderOption()?.cliArgs || '');
     };
+    let selectedDraftSlackShare = false;
+    const getDraftSlackShareEnabled = () => {
+      const checkbox = document.getElementById('draft-slack-share-enabled');
+      if (checkbox) selectedDraftSlackShare = checkbox.checked === true;
+      return selectedDraftSlackShare;
+    };
     const removeDraftProviderOptions = () => {
       document.getElementById('draft-provider-options')?.remove();
     };
@@ -1088,6 +1103,7 @@ ${messageRenderingScript}
 
       if (data.command === 'sessionFileReady') {
         form.dataset.filePath = data.filePath || '';
+        removeDraftProviderOptions();
         const shouldScroll = replaceMessages(
           Array.isArray(data.messages) ? data.messages : [],
         );
@@ -1143,6 +1159,7 @@ ${messageRenderingScript}
         attachments: readyAttachments,
         providerCliArgs,
         providerNickname: form.dataset.filePath ? undefined : String(getSelectedProviderOption()?.nickname || ''),
+        slackShareEnabled: form.dataset.filePath ? undefined : getDraftSlackShareEnabled(),
         clientMessageId,
       });
       removeDraftProviderOptions();
@@ -1192,6 +1209,7 @@ function renderSessionDetailBody(
   providerOptions: ProviderOption[],
   isDraftSession: boolean,
   lastUsedProviderNickname: string,
+  slackShareEnabled: boolean,
 ): string {
   if (session.error) {
     return `<div class="error">${escapeHtml(session.error)}</div>`;
@@ -1200,7 +1218,7 @@ function renderSessionDetailBody(
   if (!session.filePath) {
     return `${
       isDraftSession
-        ? renderDraftProviderOptions(providerOptions, lastUsedProviderNickname)
+        ? renderDraftProviderOptions(providerOptions, lastUsedProviderNickname, slackShareEnabled)
         : ""
     }<div class="messages" id="messages"></div>`;
   }
@@ -1215,9 +1233,13 @@ function renderSessionDetailBody(
 function renderDraftProviderOptions(
   providerOptions: ProviderOption[],
   lastUsedProviderNickname: string,
+  slackShareEnabled: boolean,
 ): string {
+  const slackShare = slackShareEnabled
+    ? '<label class="draft-slack-share" for="draft-slack-share-enabled"><input type="checkbox" id="draft-slack-share-enabled" checked><span>Share this session to Slack</span></label>'
+    : "";
   if (!providerOptions.length) {
-    return `<div class="draft-provider-options" id="draft-provider-options"><div class="draft-provider-message">Pi will start with default settings, but you can change what model Pi uses by creating a provider setting in the settings page.</div></div>`;
+    return `<div class="draft-provider-options" id="draft-provider-options"><div class="draft-provider-message">Pi will start with default settings, but you can change what model Pi uses by creating a provider setting in the settings page.</div>${slackShare}</div>`;
   }
 
   const selectedIndex = providerOptions.findIndex(
@@ -1231,5 +1253,5 @@ function renderDraftProviderOptions(
     .join("");
   const defaultSelected = selectedIndex === -1 ? " selected" : "";
 
-  return `<div class="draft-provider-options" id="draft-provider-options"><label class="draft-provider-label" for="draft-provider-select">Provider</label><select class="draft-provider-select" id="draft-provider-select"><option value=""${defaultSelected}>Default Pi settings</option>${options}</select></div>`;
+  return `<div class="draft-provider-options" id="draft-provider-options"><label class="draft-provider-label" for="draft-provider-select">Provider</label><select class="draft-provider-select" id="draft-provider-select"><option value=""${defaultSelected}>Default Pi settings</option>${options}</select>${slackShare}</div>`;
 }

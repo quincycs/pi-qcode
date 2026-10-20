@@ -130,7 +130,10 @@ test("new Pi terminals receive only the selected environment and preserve bridge
   };
   const sessions = new exports.PiTerminalSessions!(context as never);
   t.after(() => sessions.dispose());
-  const started = await sessions.sendSessionMessage("", "hello", settings.providerOptions[0].cliArgs, "client", undefined, "work");
+  const started = await sessions.sendSessionMessage({
+    filePath: "", text: "hello", providerCliArgs: settings.providerOptions[0].cliArgs,
+    clientMessageId: "client", providerNickname: "work", slackShareEnabled: false,
+  });
   const env = terminals[0].env;
   assert.equal(env.QCODE_ENV_TEST, "selected");
   assert.notEqual(env.QCODE_BRIDGE_TOKEN, "bad-token");
@@ -141,7 +144,10 @@ test("new Pi terminals receive only the selected environment and preserve bridge
   assert.ok(!terminals[0].commands.join().includes("selected"));
   assert.equal(process.env.QCODE_ENV_TEST, undefined);
 
-  await sessions.sendSessionMessage("", "default", "", "client-default", undefined, "");
+  await sessions.sendSessionMessage({
+    filePath: "", text: "default", clientMessageId: "client-default",
+    providerNickname: "", slackShareEnabled: false,
+  });
   assert.equal(terminals[1].env.QCODE_ENV_TEST, undefined);
 
   // Simulate Pi assigning a session file, then recreate the manager as after a reload.
@@ -158,11 +164,14 @@ test("new Pi terminals receive only the selected environment and preserve bridge
   const resumed = new exports.PiTerminalSessions!(context as never);
   t.after(() => resumed.dispose());
   fs.writeFileSync(path.join(cwd, ".env"), "QCODE_ENV_TEST=reloaded");
-  await resumed.sendSessionMessage(sessionFile, "resume");
+  await resumed.sendSessionMessage({ filePath: sessionFile, text: "resume", slackShareEnabled: false });
   assert.equal(terminals[2].env.QCODE_ENV_TEST, "reloaded");
   assert.match(terminals[2].commands.join(), /--session/);
 
   fs.unlinkSync(path.join(cwd, ".env"));
-  await assert.rejects(resumed.sendSessionMessage("", "missing", settings.providerOptions[0].cliArgs, "client", undefined, "work"), /Unable to load/);
+  await assert.rejects(resumed.sendSessionMessage({
+    filePath: "", text: "missing", providerCliArgs: settings.providerOptions[0].cliArgs,
+    clientMessageId: "client", providerNickname: "work", slackShareEnabled: false,
+  }), /Unable to load/);
   assert.equal(terminals.length, 3);
 });

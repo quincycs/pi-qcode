@@ -6,6 +6,8 @@ const vsixPath = path.resolve(process.argv[2] || "pi-qcode.vsix");
 const requiredEntries = [
   "extension/pi-extensions/qcode-bridge.ts",
   "extension/media/vendor/mermaid.min.js",
+  "extension/dist/slackWebApi.js",
+  "extension/node_modules/@slack/web-api/dist/index.js",
 ];
 let archive;
 try {
@@ -23,4 +25,4 @@ if (missingEntries.length) {
   process.exitCode = 1;
   return;
 }
-console.log(`Verified bundled qcode bridge and Mermaid renderer in ${path.basename(vsixPath)}`);
+console.log(`Verified bundled qcode bridge, Mermaid renderer and Slack SDK in ${path.basename(vsixPath)}`);

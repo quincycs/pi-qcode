@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { readQcodeSettings } from "./qcodeSettings";
+import { readQcodeSettings, type SlackShareSettings } from "./qcodeSettings";
+import { SlackShare } from "./slackShare";
 import { readEnvironmentVariables } from "./environmentVariables";
 import {
   JsonLineDecoder,
@@ -70,6 +71,7 @@ interface OptimisticUserMessage {
   deliveryState: "pending" | "accepted" | "correlated" | "failed";
   authoritativeText?: string;
   authoritativeEntryId?: string;
+  shareToSlack?: () => void;
 }
 
 interface ManagedSession {
@@ -91,6 +93,9 @@ interface ManagedSession {
   visibleMessages: SessionMessage[];
   optimisticUserMessages: OptimisticUserMessage[];
   pendingAssistant?: SessionMessage;
+  slackInitial?: { text: string; settings: SlackShareSettings };
+  slackAssistant?: { sessionFile: string; text: string };
+  slackLive?: boolean;
   thinkingCounts: Record<string, number>;
   userInputWaits: Map<string, BridgeUserInputWait>;
   sessionCost?: number;
@@ -116,6 +121,16 @@ export interface PiTerminalSessionView {
   actionError?: string;
 }
 
+export interface SendTerminalSessionOptions {
+  filePath: string;
+  text: string;
+  providerCliArgs?: string;
+  clientMessageId?: string;
+  requestedBridgeId?: string;
+  providerNickname?: string;
+  slackShareEnabled?: boolean;
+}
+
 export interface SendTerminalSessionResult {
   bridgeId: string;
   sessionFilePath?: string;
@@ -129,6 +144,10 @@ export class PiTerminalSessions implements vscode.Disposable {
   private registrationWatcher?: fs.FSWatcher;
   private scanTimer?: NodeJS.Timeout;
   private disposed = false;
+  private readonly slackShare = new SlackShare({
+    showError: (message) => { void vscode.window.showErrorMessage(message); },
+    readSettings: readQcodeSettings,
+  });
 
   readonly onDidChangeSession = this.emitter.event;
 
@@ -155,14 +174,15 @@ export class PiTerminalSessions implements vscode.Disposable {
     );
   }
 
-  async sendSessionMessage(
-    filePath: string,
-    text: string,
+  async sendSessionMessage({
+    filePath,
+    text,
     providerCliArgs = "",
-    clientMessageId: string = crypto.randomUUID(),
-    requestedBridgeId?: string,
-    providerNickname?: string,
-  ): Promise<SendTerminalSessionResult> {
+    clientMessageId = crypto.randomUUID(),
+    requestedBridgeId,
+    providerNickname,
+    slackShareEnabled,
+  }: SendTerminalSessionOptions): Promise<SendTerminalSessionResult> {
     if (!text) throw new Error("Message text cannot be empty.");
     if (filePath && !isSessionFile(filePath))
       throw new Error("Invalid Pi session file.");
@@ -179,17 +199,27 @@ export class PiTerminalSessions implements vscode.Disposable {
           clientMessageId,
         );
         this.emit(existing);
+        const slackSessionFile = existing.state?.sessionFile;
+        const slackSettings = readQcodeSettings().slackShare;
+        if (slackSessionFile && slackSettings?.enabled) {
+          outbound.shareToSlack = () => {
+            outbound.shareToSlack = undefined;
+            this.slackShare.shareUser(slackSessionFile, text, slackSettings);
+          };
+        }
         try {
           await this.sendCommand(existing, "send_user_message", {
             clientMessageId,
             text,
             delivery: "steer",
           });
+          outbound.shareToSlack?.();
           if (outbound.deliveryState === "pending") {
             outbound.deliveryState = "accepted";
             this.setVisibleDeliveryState(existing, clientMessageId, "accepted");
           }
         } catch (error) {
+          outbound.shareToSlack = undefined;
           if (existing.optimisticUserMessages.includes(outbound)) {
             outbound.deliveryState = "failed";
             this.setVisibleDeliveryState(existing, clientMessageId, "failed");
@@ -300,6 +330,16 @@ export class PiTerminalSessions implements vscode.Disposable {
       lastSequence: 0,
       pendingCommands: new Map(),
     };
+    // Only opted-in new sessions create a Slack thread. Resumed sessions use
+    // their saved thread, if any, instead of creating another one.
+    const isNewSession = !resolvedFilePath;
+    if (isNewSession && slackShareEnabled && settings.slackShare?.enabled) {
+      session.slackInitial = {
+        text,
+        settings: { ...settings.slackShare },
+      };
+    }
+
     const terminalPrompt = normalizeMessageArgument(text);
     this.appendOptimisticUserMessage(session, terminalPrompt, clientMessageId);
     this.sessions.set(bridgeId, session);
@@ -327,6 +367,7 @@ export class PiTerminalSessions implements vscode.Disposable {
     else args.push(...providerArgs);
     args.push(terminalPrompt);
     terminal.sendText(buildTerminalCommand("pi", args, terminalShell.kind), true);
+    if (resolvedFilePath) this.slackShare.shareUser(resolvedFilePath, text);
     void this.scanRegistrations();
     return { bridgeId, sessionFilePath: resolvedFilePath };
   }
@@ -600,15 +641,21 @@ export class PiTerminalSessions implements vscode.Disposable {
     }
     if (message.type === "session_state") {
       session.state = message.state;
+      this.startSlackShare(session);
       this.emit(session);
       return;
     }
     if (message.type === "session_snapshot") {
       this.applySnapshot(session, message);
+      session.slackLive = true;
       this.emit(session);
       return;
     }
     if (message.type === "user_input") {
+      // Qcode submissions are shared at send/ack, not replayed raw input events.
+      if (session.slackLive && !message.clientMessageId && session.state?.sessionFile) {
+        this.slackShare.shareUser(session.state.sessionFile, message.text);
+      }
       this.applyUserInput(session, message);
       if (session.hasSnapshot) this.emit(session);
       return;
@@ -622,6 +669,7 @@ export class PiTerminalSessions implements vscode.Disposable {
       return;
     }
     if (message.type === "agent_start") {
+      session.slackAssistant = undefined;
       if (session.state) session.state.idle = false;
       removeThinking(session.visibleMessages);
       session.thinkingCounts = {};
@@ -645,6 +693,11 @@ export class PiTerminalSessions implements vscode.Disposable {
     if (message.type === "agent_settled") {
       if (session.state) session.state.idle = true;
       session.userInputWaits.clear();
+      const reply = session.slackAssistant;
+      if (reply && reply.sessionFile === session.state?.sessionFile) {
+        this.slackShare.shareAssistant(reply.sessionFile, reply.text);
+      }
+      session.slackAssistant = undefined;
       finalizeAssistant(session);
       this.emit(session, undefined, true);
       return;
@@ -678,6 +731,13 @@ export class PiTerminalSessions implements vscode.Disposable {
     }
   }
 
+  private startSlackShare(session: ManagedSession): void {
+    if (!session.slackInitial || !session.state?.sessionFile) return;
+    const initial = session.slackInitial;
+    session.slackInitial = undefined;
+    this.slackShare.startSession(session.state.sessionFile, initial.text, initial.settings);
+  }
+
   private applyHello(session: ManagedSession, hello: BridgeHelloEvent): void {
     if (
       session.registration &&
@@ -685,6 +745,8 @@ export class PiTerminalSessions implements vscode.Disposable {
     )
       return;
     session.authenticated = true;
+    session.slackLive = false;
+    session.slackAssistant = undefined;
     session.status = "connected";
     session.terminalExited = false;
     session.userInputWaits = new Map(
@@ -702,6 +764,7 @@ export class PiTerminalSessions implements vscode.Disposable {
     };
     if (hello.sessionFile)
       session.requestedSessionFile = path.resolve(hello.sessionFile);
+    this.startSlackShare(session);
     // The snapshot follows hello on the same socket. Emitting here could briefly
     // replace a persisted or optimistic baseline with an empty reconnect state.
   }
@@ -756,6 +819,7 @@ export class PiTerminalSessions implements vscode.Disposable {
         (item) => item.clientMessageId === event.clientMessageId,
       );
       if (optimistic) {
+        optimistic.shareToSlack?.();
         optimistic.deliveryState = "correlated";
         optimistic.authoritativeText = event.text;
         const visibleIndex = session.visibleMessages.findIndex(
@@ -831,6 +895,17 @@ export class PiTerminalSessions implements vscode.Disposable {
       session.thinkingCounts = skillName ? { [`/skill:${skillName}`]: 1 } : {};
       upsertThinking(session);
       return;
+    }
+    if (role === "assistant") {
+      // Empty/tool-only/error replies must clear earlier commentary too.
+      session.slackAssistant = undefined;
+      if (event.type === "message_end" && session.state?.sessionFile &&
+          message?.stopReason !== "toolUse" && message?.stopReason !== "error" &&
+          message?.stopReason !== "aborted" &&
+          !(Array.isArray(message?.content) && message.content.some((part) => readRecord(part)?.type === "toolCall"))) {
+        const text = readMessageText(message);
+        if (text.trim()) session.slackAssistant = { sessionFile: session.state.sessionFile, text };
+      }
     }
     if (role === "assistant" && event.type === "message_end") {
       const assistant = readAssistantMessage(message);

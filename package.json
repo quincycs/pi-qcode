@@ -95,5 +95,8 @@
     "@vscode/vsce": "^3.9.2",
     "mermaid": "11.16.1",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@slack/web-api": "^8.0.0"
   }
 }

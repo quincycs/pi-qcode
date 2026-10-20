@@ -4,6 +4,8 @@ import type { QcodeSettings } from "../qcodeSettings";
 import { renderSettings } from "../webviews/settings";
 
 const settings: QcodeSettings = {
+  slackShare: { enabled: false, userToken: "", botToken: "", channelId: "" },
+  slackShareThreads: [],
   hashAutocompleteOptions: [],
   providerOptions: [],
   environmentVariables: [],

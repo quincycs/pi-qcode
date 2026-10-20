@@ -1,4 +1,3 @@
-node_modules/**
 .vscode/**
 .git/**
 _planning/**
@@ -6,6 +5,7 @@ _screenshots/**
 src/**
 dist/test/**
 scripts/**
+slack-signin/**
 tsconfig.json
 .DS_Store
 .gitignore

@@ -1,0 +1,12 @@
+{
+  "name": "qcode-slack-signin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A standalone Slack user-token OAuth helper for Qcode",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node --env-file=.env server.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

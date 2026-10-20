@@ -74,7 +74,7 @@ type WebviewMessage =
   | { command: "saveLastUsedProvider"; nickname?: string }
   | { command: "showSessionWarnings"; warnings?: unknown }
   | { command: "playNotificationSound" }
-  | { command: "sendMessage"; filePath?: string; text?: string; attachments?: unknown; providerCliArgs?: string; providerNickname?: string; clientMessageId?: string }
+  | { command: "sendMessage"; filePath?: string; text?: string; attachments?: unknown; providerCliArgs?: string; providerNickname?: string; slackShareEnabled?: boolean; clientMessageId?: string }
   | { command: "savePastedAttachment"; requestId?: string; name?: unknown; mimeType?: unknown; size?: unknown; data?: unknown }
   | { command: "removePastedAttachment"; attachment?: unknown }
   | { command: "copyToClipboard"; text?: string }
@@ -349,6 +349,7 @@ export function activate(context: vscode.ExtensionContext): void {
             initialInput: draft.text,
             initialAttachments: draft.attachments,
             providerOptions: settings.providerOptions,
+            slackShareEnabled: settings.slackShare.enabled,
             lastUsedProviderNickname: settings.lastUsedProviderNickname,
             assistantSoundEnabled: settings.assistantSoundEnabled,
             assistantSoundUri: getAssistantSoundWebviewUri(settings),
@@ -435,14 +436,15 @@ export function activate(context: vscode.ExtensionContext): void {
             // Do not let fallback watcher updates clear the optimistic bubble while
             // the terminal and bridge are being created.
             stopSessionWatcher();
-            const result = await terminalSessions.sendSessionMessage(
-              String(message.filePath || ""),
-              rawPrompt,
-              String(message.providerCliArgs || ""),
-              String(message.clientMessageId || crypto.randomUUID()),
-              sendingRoute.name === "sessionDetail" ? sendingRoute.bridgeId : undefined,
-              typeof message.providerNickname === "string" ? message.providerNickname : undefined,
-            );
+            const result = await terminalSessions.sendSessionMessage({
+              filePath: String(message.filePath || ""),
+              text: rawPrompt,
+              providerCliArgs: String(message.providerCliArgs || ""),
+              clientMessageId: String(message.clientMessageId || crypto.randomUUID()),
+              requestedBridgeId: sendingRoute.name === "sessionDetail" ? sendingRoute.bridgeId : undefined,
+              providerNickname: typeof message.providerNickname === "string" ? message.providerNickname : undefined,
+              slackShareEnabled: message.slackShareEnabled === true,
+            });
             if (currentRoute === sendingRoute && currentRoute.name === "sessionDetail") {
               currentRoute = {
                 ...currentRoute,
